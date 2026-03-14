@@ -126,6 +126,11 @@ if [ -f "$INSTALL_DIR/update.sh" ]; then
   bash "$INSTALL_DIR/update.sh" --silent &
 fi
 
+# Show update notice if available
+if [ -f "$INSTALL_DIR/update.sh" ]; then
+  bash "$INSTALL_DIR/update.sh" --notice
+fi
+
 show_help() {
   echo "Usage: cwf <command>"
   echo ""
@@ -136,10 +141,8 @@ show_help() {
   echo "  issues start            Start working after plan validation"
   echo "  issue <n>               Work on a specific issue"
   echo "  issue <n> --interactive Work on issue with terminal questions"
-  echo ""
-  echo "Options:"
-  echo "  --update                Force update cwf"
-  echo "  --uninstall             Uninstall cwf"
+  echo "  update                  Update cwf to latest version"
+  echo "  uninstall               Uninstall cwf"
 }
 
 case "$1" in
@@ -157,10 +160,10 @@ case "$1" in
     shift
     exec claude "/cwf-issue $*"
     ;;
-  --update)
-    exec bash "$INSTALL_DIR/update.sh" --force
+  update)
+    exec bash "$INSTALL_DIR/update.sh" --update
     ;;
-  --uninstall)
+  uninstall)
     exec bash "$INSTALL_DIR/update.sh" --uninstall
     ;;
   ""|--help|-h)
@@ -218,8 +221,8 @@ print_success() {
   echo -e "  ${BOLD}cwf issues${RESET}              → plan all issues"
   echo -e "  ${BOLD}cwf issue 42${RESET}            → work on issue #42"
   echo ""
-  echo -e "${DIM}  cwf --update    Force update${RESET}"
-  echo -e "${DIM}  cwf --uninstall Uninstall${RESET}"
+  echo -e "${DIM}  cwf update      Update to latest version${RESET}"
+  echo -e "${DIM}  cwf uninstall   Uninstall${RESET}"
   echo ""
 }
 

@@ -47,8 +47,8 @@ The script asks all the questions and configures everything automatically.
 Updates are checked automatically in the background.
 
 ```bash
-cwf --update      # Force update
-cwf --uninstall   # Uninstall
+cwf update      # Update to latest version
+cwf uninstall   # Uninstall
 ```
 
 ---

@@ -6,61 +6,85 @@
 REPO="JeffreyGbeho/claude-workflow"
 INSTALL_DIR="$HOME/.claude-workflow"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
-SILENT=false
+UPDATE_FLAG="$INSTALL_DIR/.update-available"
 
-[ "$1" = "--silent" ] && SILENT=true
+print_ok()   { echo -e "\033[32m  ✓ $1\033[0m"; }
+print_info() { echo -e "\033[2m  $1\033[0m"; }
+print_step() { echo -e "\033[36m\033[1m▶ $1\033[0m"; }
 
-print() { [ "$SILENT" = false ] && echo -e "$1"; }
-print_ok()   { print "\033[32m  ✓ $1\033[0m"; }
-print_info() { print "\033[2m  $1\033[0m"; }
-print_step() { print "\033[36m\033[1m▶ $1\033[0m"; }
-
-check_update() {
-  # Fetch remote version
+# ── Silent check (background) — just write a flag if update available ────────
+check_silent() {
   local remote_version
   remote_version=$(curl -fsSL --max-time 5 "${RAW_BASE}/VERSION" 2>/dev/null || echo "")
-
-  # If no connection or error, exit silently
   [ -z "$remote_version" ] && return 0
 
   local local_version
   local_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "0.0.0")
 
-  if [ "$remote_version" = "$local_version" ]; then
-    print_info "Already up to date (v$local_version)"
-    return 0
-  fi
-
-  # An update is available
-  if [ "$SILENT" = true ]; then
-    # In silent mode (background): download without asking
-    apply_update "$remote_version"
+  if [ "$remote_version" != "$local_version" ]; then
+    echo "$remote_version" > "$UPDATE_FLAG"
   else
-    echo ""
-    echo -e "\033[33m\033[1m  Update available: v$local_version → v$remote_version\033[0m"
-    echo -ne "  Update now? [y/n]: "
-    read -r answer
-    if [[ "$answer" =~ ^[yY] ]]; then
-      apply_update "$remote_version"
-    fi
+    rm -f "$UPDATE_FLAG"
   fi
 }
 
+# ── Show update notice (called by wrapper) ───────────────────────────────────
+show_notice() {
+  if [ -f "$UPDATE_FLAG" ]; then
+    local new_version
+    new_version=$(cat "$UPDATE_FLAG")
+    local local_version
+    local_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "0.0.0")
+    echo -e "\033[33m  ⚡ Update available: v$local_version → v$new_version — run \033[1mcwf update\033[0;33m to update\033[0m"
+    echo ""
+  fi
+}
+
+# ── Apply update ─────────────────────────────────────────────────────────────
 apply_update() {
-  local new_version="$1"
+  local remote_version
+  remote_version=$(curl -fsSL --max-time 10 "${RAW_BASE}/VERSION" 2>/dev/null || echo "")
 
-  [ "$SILENT" = false ] && print_step "Updating to v${new_version}..."
+  if [ -z "$remote_version" ]; then
+    echo -e "\033[31m  ✗ Could not reach update server\033[0m"
+    return 1
+  fi
 
-  # Download new files
+  local local_version
+  local_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "0.0.0")
+
+  if [ "$remote_version" = "$local_version" ]; then
+    print_ok "Already up to date (v$local_version)"
+    return 0
+  fi
+
+  print_step "Updating v${local_version} → v${remote_version}..."
+
   curl -fsSL "${RAW_BASE}/src/install-claude-workflow.sh" -o "$INSTALL_DIR/install-claude-workflow.sh" && \
     chmod +x "$INSTALL_DIR/install-claude-workflow.sh"
 
   curl -fsSL "${RAW_BASE}/src/update.sh" -o "$INSTALL_DIR/update.sh" && \
     chmod +x "$INSTALL_DIR/update.sh"
 
-  echo "$new_version" > "$INSTALL_DIR/VERSION"
+  # Also update the cwf wrapper
+  curl -fsSL "${RAW_BASE}/bootstrap.sh" -o "/tmp/cwf-bootstrap.sh" 2>/dev/null
+  if [ -f "/tmp/cwf-bootstrap.sh" ]; then
+    # Extract and run just the create_command part would be complex,
+    # so we re-download the wrapper content from bootstrap
+    for dir in "$HOME/.local/bin" "$HOME/bin" "/usr/local/bin"; do
+      if [ -f "$dir/cwf" ]; then
+        # Re-generate wrapper from bootstrap
+        bash /tmp/cwf-bootstrap.sh 2>/dev/null || true
+        break
+      fi
+    done
+    rm -f /tmp/cwf-bootstrap.sh
+  fi
 
-  [ "$SILENT" = false ] && print_ok "Updated to v${new_version}"
+  echo "$remote_version" > "$INSTALL_DIR/VERSION"
+  rm -f "$UPDATE_FLAG"
+
+  print_ok "Updated to v${remote_version}"
 }
 
 # ── Uninstall ─────────────────────────────────────────────────────────────────
@@ -69,11 +93,9 @@ uninstall() {
   echo -e "\033[1m  Uninstalling claude-workflow...\033[0m"
   echo ""
 
-  # Remove install directory
   rm -rf "$INSTALL_DIR"
   print_ok "$INSTALL_DIR directory removed"
 
-  # Remove global command
   for dir in "$HOME/.local/bin" "$HOME/bin" "/usr/local/bin"; do
     if [ -f "$dir/cwf" ]; then
       rm -f "$dir/cwf"
@@ -88,12 +110,10 @@ uninstall() {
 }
 
 # ── Entry point ───────────────────────────────────────────────────────────────
-main() {
-  case "$1" in
-    --uninstall) uninstall ;;
-    --force)     SILENT=false; apply_update "$(curl -fsSL "${RAW_BASE}/VERSION" 2>/dev/null)" ;;
-    *)           check_update ;;
-  esac
-}
-
-main "$@"
+case "$1" in
+  --silent)  check_silent ;;
+  --notice)  show_notice ;;
+  --update)  apply_update ;;
+  --uninstall) uninstall ;;
+  *)         apply_update ;;
+esac
