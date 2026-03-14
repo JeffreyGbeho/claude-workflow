@@ -126,7 +126,26 @@ if [ -f "$INSTALL_DIR/update.sh" ]; then
   bash "$INSTALL_DIR/update.sh" --silent &
 fi
 
+show_help() {
+  echo "Usage: cwf <command>"
+  echo ""
+  echo "Commands:"
+  echo "  init                    Configure claude-workflow in current project"
+  echo "  status                  Show issues, branches, and MR status"
+  echo "  issues                  Analyze all issues and propose a plan"
+  echo "  issues start            Start working after plan validation"
+  echo "  issue <n>               Work on a specific issue"
+  echo "  issue <n> --interactive Work on issue with terminal questions"
+  echo ""
+  echo "Options:"
+  echo "  --update                Force update cwf"
+  echo "  --uninstall             Uninstall cwf"
+}
+
 case "$1" in
+  init)
+    exec bash "$INSTALL_DIR/install-claude-workflow.sh"
+    ;;
   status)
     exec claude "/cwf-status"
     ;;
@@ -144,23 +163,13 @@ case "$1" in
   --uninstall)
     exec bash "$INSTALL_DIR/update.sh" --uninstall
     ;;
-  ""|init)
-    exec bash "$INSTALL_DIR/install-claude-workflow.sh"
+  ""|--help|-h)
+    show_help
     ;;
   *)
-    echo "Usage: cwf <command>"
+    echo "Unknown command: $1"
     echo ""
-    echo "Commands:"
-    echo "  init                    Configure claude-workflow in current project"
-    echo "  status                  Show issues, branches, and MR status"
-    echo "  issues                  Analyze all issues and propose a plan"
-    echo "  issues start            Start working after plan validation"
-    echo "  issue <n>               Work on a specific issue"
-    echo "  issue <n> --interactive Work on issue with terminal questions"
-    echo ""
-    echo "Options:"
-    echo "  --update                Force update cwf"
-    echo "  --uninstall             Uninstall cwf"
+    show_help
     exit 1
     ;;
 esac
