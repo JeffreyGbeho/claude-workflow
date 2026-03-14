@@ -6,6 +6,11 @@
 
 set -e
 
+# Restore cursor and exit cleanly on interrupt
+cleanup() { tput cnorm 2>/dev/null || true; }
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT TERM
+
 # ── Colors ───────────────────────────────────────────────────────────────────
 BOLD="\033[1m"
 DIM="\033[2m"
@@ -77,26 +82,91 @@ ask_choice() {
   local varname="$2"
   shift 2
   local options=("$@")
-  echo -e "${BOLD}  $prompt${RESET}"
+  local selected=0
+  local total=${#options[@]}
+
+  printf "\n\033[1m  %s\033[0m\n" "$prompt"
+  printf "  \033[2m(↑↓ arrows, Enter to confirm)\033[0m\n"
+  printf "\033[?25l" # hide cursor
+
   for i in "${!options[@]}"; do
-    echo -e "    ${CYAN}$((i+1))${RESET}) ${options[$i]}"
-  done
-  while true; do
-    echo -ne "  ${BOLD}Your choice [1-${#options[@]}]${RESET}: "
-    read -r choice
-    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#options[@]}" ]; then
-      eval "$varname=\"${options[$((choice-1))]}\""
-      break
+    if [ "$i" -eq "$selected" ]; then
+      printf "  \033[36;1m❯ %s\033[0m\n" "${options[$i]}"
+    else
+      printf "    \033[2m%s\033[0m\n" "${options[$i]}"
     fi
-    print_warn "Invalid choice, enter a number between 1 and ${#options[@]}"
   done
+
+  while true; do
+    IFS= read -rsn1 key
+    if [[ "$key" == $'\x1b' ]]; then
+      read -rsn2 -t 0.5 rest
+      key="${key}${rest}"
+    fi
+
+    case "$key" in
+      $'\x1b[A') [ "$selected" -gt 0 ] && selected=$((selected - 1)) ;;
+      $'\x1b[B') [ "$selected" -lt $((total - 1)) ] && selected=$((selected + 1)) ;;
+      "") break ;;
+      *) continue ;;
+    esac
+
+    printf "\033[%dA" "$total"
+    for i in "${!options[@]}"; do
+      printf "\r\033[2K"
+      if [ "$i" -eq "$selected" ]; then
+        printf "  \033[36;1m❯ %s\033[0m\n" "${options[$i]}"
+      else
+        printf "    \033[2m%s\033[0m\n" "${options[$i]}"
+      fi
+    done
+  done
+
+  printf "\033[?25h" # show cursor
+  eval "$varname=\"${options[$selected]}\""
+  print_ok "${options[$selected]}"
 }
 
 confirm() {
   local prompt="$1"
-  echo -ne "${BOLD}  $prompt ${DIM}[y/n]${RESET}: "
-  read -r answer
-  [[ "$answer" =~ ^[yY] ]]
+  local selected=0 # 0=Yes, 1=No
+
+  printf "\033[1m  %s\033[0m\n" "$prompt"
+  printf "\033[?25l" # hide cursor
+
+  if [ "$selected" -eq 0 ]; then
+    printf "  \033[36;1m❯ Yes\033[0m    \033[2mNo\033[0m"
+  else
+    printf "    \033[2mYes\033[0m  \033[36;1m❯ No\033[0m"
+  fi
+
+  while true; do
+    IFS= read -rsn1 key
+    if [[ "$key" == $'\x1b' ]]; then
+      read -rsn2 -t 0.5 rest
+      key="${key}${rest}"
+    fi
+
+    case "$key" in
+      $'\x1b[A'|$'\x1b[B'|$'\x1b[C'|$'\x1b[D')
+        selected=$(( 1 - selected ))
+        ;;
+      "") break ;;
+      *) continue ;;
+    esac
+
+    printf "\r\033[2K"
+    if [ "$selected" -eq 0 ]; then
+      printf "  \033[36;1m❯ Yes\033[0m    \033[2mNo\033[0m"
+    else
+      printf "    \033[2mYes\033[0m  \033[36;1m❯ No\033[0m"
+    fi
+  done
+
+  printf "\n"
+  printf "\033[?25h" # show cursor
+
+  [ "$selected" -eq 0 ]
 }
 
 check_command() {
@@ -106,6 +176,144 @@ check_command() {
   fi
   print_ok "$1 detected"
   return 0
+}
+
+# ── Credentials store ────────────────────────────────────────────────────────
+CREDENTIALS_FILE="$HOME/.claude-workflow/credentials"
+
+mask_token() {
+  local token="$1"
+  local len=${#token}
+  if [ "$len" -le 4 ]; then
+    echo "$token"
+  else
+    echo "***${token: -4}"
+  fi
+}
+
+save_credential() {
+  # save_credential platform username token
+  local platform="$1"
+  local username="$2"
+  local token="$3"
+  mkdir -p "$(dirname "$CREDENTIALS_FILE")"
+  touch "$CREDENTIALS_FILE"
+  chmod 600 "$CREDENTIALS_FILE"
+  # Remove existing entry for this platform+username
+  local tmp
+  tmp=$(grep -v "^${platform}|${username}|" "$CREDENTIALS_FILE" 2>/dev/null || true)
+  echo "$tmp" > "$CREDENTIALS_FILE"
+  # Append new entry
+  echo "${platform}|${username}|${token}" >> "$CREDENTIALS_FILE"
+  # Remove empty lines
+  sed -i '/^$/d' "$CREDENTIALS_FILE"
+}
+
+# select_or_create_token platform
+# Sets: TOKEN_VALUE, TOKEN_USERNAME
+select_or_create_token() {
+  local platform="$1"
+
+  # Load saved tokens for this platform
+  local entries=()
+  local usernames=()
+  local tokens=()
+  if [ -f "$CREDENTIALS_FILE" ]; then
+    while IFS='|' read -r p u t; do
+      if [ "$p" = "$platform" ] && [ -n "$u" ] && [ -n "$t" ]; then
+        entries+=("$u ($(mask_token "$t"))")
+        usernames+=("$u")
+        tokens+=("$t")
+      fi
+    done < "$CREDENTIALS_FILE"
+  fi
+
+  if [ ${#entries[@]} -eq 0 ]; then
+    # No saved tokens — go straight to creation
+    create_new_token "$platform"
+    return
+  fi
+
+  # Show saved tokens + option to add new
+  local options=("${entries[@]}" "Add a new token")
+
+  ask_choice "Select a $platform account:" SELECTED_ACCOUNT "${options[@]}"
+
+  # Check if user chose "Add a new token"
+  if [ "$SELECTED_ACCOUNT" = "Add a new token" ]; then
+    create_new_token "$platform"
+    return
+  fi
+
+  # Find the selected token
+  for i in "${!entries[@]}"; do
+    if [ "${entries[$i]}" = "$SELECTED_ACCOUNT" ]; then
+      TOKEN_VALUE="${tokens[$i]}"
+      TOKEN_USERNAME="${usernames[$i]}"
+      return
+    fi
+  done
+}
+
+create_new_token() {
+  local platform="$1"
+
+  echo ""
+  if [ "$platform" = "GitHub" ]; then
+    print_info "You'll need a GitHub Personal Access Token."
+    print_info "To create one: https://github.com/settings/tokens"
+    print_info "Type: Fine-grained token"
+    print_info "Permissions: Contents (R&W), Issues (R&W), Pull Requests (R&W)"
+  else
+    print_info "You'll need a GitLab Personal Access Token."
+    print_info "To create one: ${GITLAB_URL:-https://gitlab.com}/-/user_settings/personal_access_tokens"
+    print_info "Required scopes: api, read_repository, write_repository"
+  fi
+  echo ""
+
+  ask "Your $platform Personal Access Token" TOKEN_VALUE
+
+  # Verify token
+  print_step "Verifying $platform token..."
+  local response
+
+  if [ "$platform" = "GitHub" ]; then
+    response=$(curl -sf -H "Authorization: Bearer $TOKEN_VALUE" "https://api.github.com/user" 2>/dev/null || echo "ERROR")
+  else
+    response=$(curl -sf --header "PRIVATE-TOKEN: $TOKEN_VALUE" "$GITLAB_URL/api/v4/user" 2>/dev/null || echo "ERROR")
+  fi
+
+  if [ "$response" = "ERROR" ]; then
+    print_error "Invalid token or instance unreachable"
+    if confirm "Do you want to try again?"; then
+      create_new_token "$platform"
+      return
+    else
+      exit 1
+    fi
+  fi
+
+  if [ "$platform" = "GitHub" ]; then
+    TOKEN_USERNAME=$(echo "$response" | sed -n 's/.*"login" *: *"\([^"]*\)".*/\1/p' | head -1)
+  else
+    TOKEN_USERNAME=$(echo "$response" | sed -n 's/.*"username" *: *"\([^"]*\)".*/\1/p' | head -1)
+  fi
+
+  if [ -z "$TOKEN_USERNAME" ]; then
+    print_error "Could not extract username from API response"
+    if confirm "Do you want to try again?"; then
+      create_new_token "$platform"
+      return
+    else
+      exit 1
+    fi
+  fi
+
+  print_ok "Logged in as: $TOKEN_USERNAME"
+
+  # Save credential
+  save_credential "$platform" "$TOKEN_USERNAME" "$TOKEN_VALUE"
+  print_ok "Token saved for next time"
 }
 
 # ── Check prerequisites ──────────────────────────────────────────────────────
@@ -210,30 +418,9 @@ configure_gitlab() {
   fi
 
   echo ""
-  print_info "You'll need a GitLab Personal Access Token."
-  print_info "To create one: $GITLAB_URL/-/user_settings/personal_access_tokens"
-  print_info "Required scopes: api, read_repository, write_repository"
-  echo ""
-
-  ask_secret "Your GitLab Personal Access Token" GITLAB_TOKEN
-
-  # Verify token
-  print_step "Verifying GitLab token..."
-  local response
-  response=$(curl -sf --header "PRIVATE-TOKEN: $GITLAB_TOKEN" "$GITLAB_URL/api/v4/user" 2>/dev/null || echo "ERROR")
-
-  if [ "$response" = "ERROR" ]; then
-    print_error "Invalid token or instance unreachable"
-    if confirm "Do you want to try again?"; then
-      configure_gitlab
-      return
-    else
-      exit 1
-    fi
-  fi
-
-  GITLAB_USERNAME=$(echo "$response" | grep -o '"username":"[^"]*"' | cut -d'"' -f4)
-  print_ok "Logged in as: $GITLAB_USERNAME"
+  select_or_create_token "GitLab"
+  GITLAB_TOKEN="$TOKEN_VALUE"
+  GITLAB_USERNAME="$TOKEN_USERNAME"
   echo ""
 
   # Detect namespace from git remote
@@ -282,36 +469,15 @@ configure_github() {
   print_step "GitHub Configuration"
   echo ""
 
+  select_or_create_token "GitHub"
+  GITHUB_TOKEN="$TOKEN_VALUE"
+  GITHUB_USERNAME="$TOKEN_USERNAME"
+  echo ""
+
   ask_choice "Visibility mode?" GITHUB_MODE \
     "Private repo only" \
     "Private repo + sync to public repo"
 
-  echo ""
-  print_info "You'll need a GitHub Personal Access Token."
-  print_info "To create one: https://github.com/settings/tokens"
-  print_info "Type: Fine-grained token"
-  print_info "Permissions: Contents (R&W), Issues (R&W), Pull Requests (R&W)"
-  echo ""
-
-  ask_secret "Your GitHub Personal Access Token" GITHUB_TOKEN
-
-  # Verify token
-  print_step "Verifying GitHub token..."
-  local response
-  response=$(curl -sf -H "Authorization: Bearer $GITHUB_TOKEN" "https://api.github.com/user" 2>/dev/null || echo "ERROR")
-
-  if [ "$response" = "ERROR" ]; then
-    print_error "Invalid token"
-    if confirm "Do you want to try again?"; then
-      configure_github
-      return
-    else
-      exit 1
-    fi
-  fi
-
-  GITHUB_USERNAME=$(echo "$response" | grep -o '"login":"[^"]*"' | cut -d'"' -f4)
-  print_ok "Logged in as: $GITHUB_USERNAME"
   echo ""
 
   # Detect repo from remote
@@ -602,111 +768,6 @@ ISSUEMD
   print_ok ".claude/commands/issue.md created"
 }
 
-# ── Setup GitHub Actions (if GitHub) ──────────────────────────────────────────
-setup_github_actions() {
-  if [ "$PLATFORM" != "GitHub" ]; then
-    return
-  fi
-
-  print_header "GitHub Actions Configuration"
-
-  mkdir -p .github/workflows
-
-  # Main Claude workflow
-  cat > .github/workflows/claude.yml << CLAUDEYML
-name: Claude Code Workflow
-
-on:
-  issue_comment:
-    types: [created]
-  pull_request_review_comment:
-    types: [created]
-  issues:
-    types: [opened, assigned]
-  pull_request_review:
-    types: [submitted]
-
-jobs:
-  claude:
-    if: |
-      github.actor != 'claude[bot]' &&
-      github.actor != 'github-actions[bot]' &&
-      (
-        (github.event_name == 'issue_comment' &&
-         contains(github.event.comment.body, '@claude')) ||
-        (github.event_name == 'pull_request_review_comment' &&
-         contains(github.event.comment.body, '@claude')) ||
-        (github.event_name == 'pull_request_review' &&
-         contains(github.event.review.body, '@claude')) ||
-        (github.event_name == 'issues' &&
-         contains(github.event.issue.body, '@claude'))
-      )
-
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      id-token: write
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: anthropics/claude-code-action@v1
-        with:
-          anthropic_api_key: \${{ secrets.ANTHROPIC_API_KEY }}
-          allowed_tools: |
-            Bash(git *)
-            Bash(ls *)
-            Bash(cat *)
-            Bash(grep *)
-            Bash(find *)
-            Read
-            Edit
-            Write
-            MultiEdit
-          claude_args: '--max-turns 20'
-CLAUDEYML
-  print_ok ".github/workflows/claude.yml created"
-
-  # Sync workflow if public mode
-  if [ "$GITHUB_MODE" = "Private repo + sync to public repo" ]; then
-    cat > .github/workflows/sync-public.yml << SYNCYML
-name: Sync to public repo
-
-on:
-  push:
-    branches:
-      - main
-
-jobs:
-  sync:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Remove private files
-        run: |
-          git rm --cached CLAUDE.md 2>/dev/null || true
-          git rm --cached .github/workflows/claude.yml 2>/dev/null || true
-          git rm --cached -r _private/ 2>/dev/null || true
-
-      - name: Push to public repo
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git remote add public https://x-access-token:\${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/${GITHUB_USERNAME}/${GITHUB_PUBLIC_REPO}.git
-          git push public main --force
-SYNCYML
-    print_ok ".github/workflows/sync-public.yml created"
-  fi
-}
-
 # ── Save secrets locally (optional) ──────────────────────────────────────────
 save_secrets() {
   print_header "Secrets and environment variables"
@@ -736,29 +797,6 @@ ENVFILE
     fi
   fi
 
-  # Instructions for GitHub Secrets if GitHub
-  if [ "$PLATFORM" = "GitHub" ]; then
-    echo ""
-    print_step "For GitHub Actions, you need to add these secrets to your repo:"
-    print_info "  GitHub → Settings → Secrets and variables → Actions"
-    echo ""
-    print_info "  Secrets to add:"
-    print_info "    ANTHROPIC_API_KEY  →  your Anthropic API key"
-    if [ -n "$GITHUB_SYNC_TOKEN" ]; then
-      print_info "    PUBLIC_REPO_TOKEN  →  $GITHUB_SYNC_TOKEN"
-    fi
-    echo ""
-    if confirm "Do you want to open the GitHub secrets page in your browser?"; then
-      local secrets_url="https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}/settings/secrets/actions"
-      if command -v xdg-open &>/dev/null; then
-        xdg-open "$secrets_url"
-      elif command -v open &>/dev/null; then
-        open "$secrets_url"
-      else
-        print_info "Open manually: $secrets_url"
-      fi
-    fi
-  fi
 }
 
 # ── Final summary ─────────────────────────────────────────────────────────────
@@ -771,8 +809,6 @@ print_summary() {
   echo -e "  • .claude/commands/status.md"
   echo -e "  • .claude/commands/issues.md"
   echo -e "  • .claude/commands/issue.md"
-  [ "$PLATFORM" = "GitHub" ] && echo -e "  • .github/workflows/claude.yml"
-  [ -n "$GITHUB_PUBLIC_REPO" ] && echo -e "  • .github/workflows/sync-public.yml"
   echo ""
 
   echo -e "${CYAN}${BOLD}  Available commands in Claude Code:${RESET}"
@@ -792,8 +828,7 @@ print_summary() {
 
   if [ "$PLATFORM" = "GitHub" ]; then
     echo -e "${CYAN}${BOLD}  Next step:${RESET}"
-    echo -e "  Add ${BOLD}ANTHROPIC_API_KEY${RESET} to GitHub secrets"
-    echo -e "  Run ${BOLD}/install-github-app${RESET} in Claude Code to activate the action"
+    echo -e "  Run ${BOLD}claude${RESET} in this directory and try ${BOLD}/status${RESET}"
   fi
 
   echo ""
@@ -820,7 +855,6 @@ main() {
   fi
 
   create_workflow_files
-  setup_github_actions
   save_secrets
   print_summary
 }
