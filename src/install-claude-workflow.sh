@@ -507,31 +507,6 @@ configure_github_sync_token() {
   ask_secret "Sync token for public repo" GITHUB_SYNC_TOKEN
 }
 
-# ── Setup GitLab MCP ─────────────────────────────────────────────────────────
-setup_gitlab_mcp() {
-  print_header "GitLab MCP Configuration"
-
-  if ! command -v claude &>/dev/null; then
-    print_warn "Claude Code not available — MCP configured manually in files"
-    return
-  fi
-
-  print_step "Adding GitLab MCP server to Claude Code..."
-
-  # Check if already configured
-  if claude mcp list 2>/dev/null | grep -qi "gitlab"; then
-    print_ok "GitLab MCP already configured"
-  else
-    claude mcp add --transport http GitLab "$GITLAB_URL/api/v4/mcp" 2>/dev/null && \
-      print_ok "GitLab MCP added: $GITLAB_URL/api/v4/mcp" || \
-      print_warn "Unable to add MCP automatically — do it manually:"
-    print_info "  claude mcp add --transport http GitLab $GITLAB_URL/api/v4/mcp"
-  fi
-
-  echo ""
-  print_info "On first Claude Code launch, your browser will open"
-  print_info "for OAuth authorization. Approve the request."
-}
 
 # ── Create workflow files ─────────────────────────────────────────────────────
 create_workflow_files() {
@@ -585,6 +560,7 @@ CLAUDEMD
   # ── .claude/config ──
   cat > .claude/config << CONFIG
 PLATFORM=${PLATFORM}
+TOKEN=${TOKEN_VALUE}
 $([ "$PLATFORM" = "GitLab" ] && cat << GITLABCONF
 GITLAB_URL=${GITLAB_URL}
 GITLAB_NAMESPACE=${GITLAB_NAMESPACE}
@@ -601,74 +577,167 @@ WORKFLOW_MODE=${WORKFLOW_MODE}
 CONFIG
   print_ok ".claude/config created"
 
-  # ── /status command ──
-  cat > .claude/commands/status.md << 'STATUSMD'
+  # ── .claude/settings.json ──
+  cat > .claude/settings.json << 'SETTINGSJSON'
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl *)",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(mkdir *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(rm *)",
+      "Bash(cat *)",
+      "Bash(grep *)",
+      "Bash(find *)",
+      "Bash(npm *)",
+      "Bash(npx *)",
+      "Bash(node *)",
+      "Bash(python *)",
+      "Bash(pip *)",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "WebFetch"
+    ],
+    "deny": [
+      "Bash(git push * main*)",
+      "Bash(git push * master*)",
+      "Bash(git commit * main*)",
+      "Bash(git commit * master*)",
+      "Bash(git merge * main*)",
+      "Bash(git merge * master*)",
+      "Bash(git checkout main*)",
+      "Bash(git checkout master*)",
+      "Bash(git switch main*)",
+      "Bash(git switch master*)"
+    ]
+  }
+}
+SETTINGSJSON
+  print_ok ".claude/settings.json created"
+
+  # Add .claude/config to .gitignore (contains token)
+  if [ -f ".gitignore" ]; then
+    if ! grep -q ".claude/config" .gitignore; then
+      echo ".claude/config" >> .gitignore
+    fi
+  else
+    echo ".claude/config" > .gitignore
+  fi
+
+  # ── /cwf-status command ──
+  cat > .claude/commands/cwf-status.md << 'STATUSMD'
 ---
-description: Shows the status of current issues and open MRs/PRs
-allowed-tools: mcp__gitlab__*, Bash(git *), Bash(ls *), Read
+description: Shows the status of current issues, branches, and open MRs/PRs
+allowed-tools: Bash(curl *), Bash(git *), Bash(ls *), Read
 ---
 
-# /status
+# /cwf-status
 
-Read the `.claude/config` file to determine the platform and project.
+Read `.claude/config` to get PLATFORM, TOKEN, and project details.
 
-Then:
-1. Via MCP, retrieve open issues, issues with associated MRs, and open MRs
-2. For each sub-repo (if multi-repo), list active branches with `git -C <repo> branch`
-3. Display a clear summary in the terminal with:
-   - Open issues (number, title, concerned repo)
-   - Issues in development with their MR
-   - MRs awaiting review
+## Fetch data using curl
 
-Desired display format:
+**If PLATFORM=GitHub:**
+- Open issues: `curl -s -H "Authorization: Bearer $TOKEN" "https://api.github.com/repos/$GITHUB_USERNAME/$GITHUB_REPO/issues?state=open&per_page=100"`
+- Open PRs: `curl -s -H "Authorization: Bearer $TOKEN" "https://api.github.com/repos/$GITHUB_USERNAME/$GITHUB_REPO/pulls?state=open"`
+
+**If PLATFORM=GitLab:**
+- Open issues: `curl -s --header "PRIVATE-TOKEN: $TOKEN" "$GITLAB_URL/api/v4/projects/$GITLAB_NAMESPACE%2F$GITLAB_PROJECT/issues?state=opened&per_page=100"`
+- Open MRs: `curl -s --header "PRIVATE-TOKEN: $TOKEN" "$GITLAB_URL/api/v4/projects/$GITLAB_NAMESPACE%2F$GITLAB_PROJECT/merge_requests?state=opened"`
+
+## Also check local git state
+- `git branch` to list local branches
+- For each feature/fix branch, check if it has a corresponding open PR/MR
+- `git log main..branch --oneline` to see how far ahead each branch is
+
+## Display format
 ```
 ═══════════════════════════════════════════
   Project Status
 ═══════════════════════════════════════════
 
 📋 OPEN ISSUES
-  #12 · Issue title         [repo-backend]
-  #15 · Issue title         [repo-frontend]
+  #12 · Issue title
+  #15 · Issue title
 
-🔧 IN PROGRESS
-  #8  · Issue title         → MR/PR open
+🔧 IN PROGRESS (local branches)
+  feature/8-auth  → #8 · Issue title  (3 commits ahead, PR open)
+  feature/12-api  → #12 · Issue title (1 commit ahead, no PR)
 
 ✅ AWAITING REVIEW
-  MR/PR · feat: description
+  PR #23 · feat: auth system (from feature/8-auth)
 
-Use /issues to plan · /issue <n> for a specific issue
+Use /cwf-issues to plan · /cwf-issue <n> for a specific issue
 ═══════════════════════════════════════════
 ```
 STATUSMD
-  print_ok ".claude/commands/status.md created"
+  print_ok ".claude/commands/cwf-status.md created"
 
-  # ── /issues command ──
-  cat > .claude/commands/issues.md << 'ISSUESMD'
+  # ── /cwf-issues command ──
+  cat > .claude/commands/cwf-issues.md << 'ISSUESMD'
 ---
 description: Read all issues, propose a prioritized order, wait for approval
-allowed-tools: mcp__gitlab__*, mcp__github__*, Bash(git *), Bash(ls *), Bash(cat *), Bash(grep *), Bash(find *), Read, Edit, Write, MultiEdit
+allowed-tools: Bash(curl *), Bash(git *), Bash(ls *), Read, Edit, Write
 ---
 
-# /issues $ARGUMENTS
+# /cwf-issues $ARGUMENTS
 
-Read `.claude/config` to determine the platform, project, and mode.
+Read `.claude/config` to get PLATFORM, TOKEN, and project details.
 
 ## Step 1 — Retrieve all open issues
-Via MCP, retrieve all open issues with their number, title, description, and labels.
 
-## Step 2 — Analyze dependencies
+**If PLATFORM=GitHub:**
+```
+curl -s -H "Authorization: Bearer $TOKEN" "https://api.github.com/repos/$GITHUB_USERNAME/$GITHUB_REPO/issues?state=open&per_page=100"
+```
+
+**If PLATFORM=GitLab:**
+```
+curl -s --header "PRIVATE-TOKEN: $TOKEN" "$GITLAB_URL/api/v4/projects/$GITLAB_NAMESPACE%2F$GITLAB_PROJECT/issues?state=opened&per_page=100"
+```
+
+For each issue, extract: number, title, description, labels.
+
+## Step 2 — Analyze dependencies and local state
 For each issue, identify:
-- Issues mentioned in its description (dependencies)
-- The concerned repo(s) (infer from content)
+- Issues mentioned in its description (dependencies like "depends on #12", "after #8", "blocked by #3")
 - Its nature: foundation / feature / bugfix / improvement
+- Check `git branch` to see if a branch already exists for this issue (pattern: `feature/<n>-*` or `fix/<n>-*`)
+- If a branch exists, check its PR/MR status via curl
 
 ## Step 3 — Propose a logical order
 Sort by priority:
 1. Foundations first (data models, configs, base structures)
 2. Then independent features
 3. Finally features that depend on previous ones
+4. Skip issues that already have a merged PR/MR
+
+For each issue, specify:
+- **Base branch**: `main` if independent, or `feature/<dep>-*` if it depends on an unmerged issue
+- **Status**: new / in progress / PR open / merged
 
 ## Step 4 — Post the plan as a comment on the oldest issue
+
+**If PLATFORM=GitHub:**
+```
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"body": "..."}' \
+  "https://api.github.com/repos/$GITHUB_USERNAME/$GITHUB_REPO/issues/$ISSUE_NUMBER/comments"
+```
+
+**If PLATFORM=GitLab:**
+```
+curl -s -X POST --header "PRIVATE-TOKEN: $TOKEN" --header "Content-Type: application/json" \
+  -d '{"body": "..."}' \
+  "$GITLAB_URL/api/v4/projects/$GITLAB_NAMESPACE%2F$GITLAB_PROJECT/issues/$ISSUE_NUMBER/notes"
+```
+
 Comment format:
 
 ---
@@ -676,11 +745,11 @@ Comment format:
 
 I've analyzed **X open issues**. Here's the order I propose:
 
-| # | Issue | Repo | Reason |
-|---|-------|------|--------|
-| 1 | #12 · Title | repo-backend | Foundation for #15 |
-| 2 | #8 · Title | repo-frontend | Independent |
-| 3 | #15 · Title | repo-backend | Depends on #12 |
+| # | Issue | Base branch | Reason |
+|---|-------|-------------|--------|
+| 1 | #12 · Title | `main` | Foundation for #15 |
+| 2 | #8 · Title | `main` | Independent |
+| 3 | #15 · Title | `feature/12-api` | Depends on #12 (not yet merged) |
 
 To start, reply to this comment:
 - `go` → I'll begin in this order
@@ -695,47 +764,94 @@ After posting the comment, stop completely.
 
 ## If $ARGUMENTS contains "start"
 Read the latest validation comment in the issue.
-Process each issue in the validated order:
-1. Re-read the description and comments
-2. Identify the concerned repo
-3. Create the branch: `git -C <repo> checkout -b feature/<n>-<short-title>`
-4. Develop, commit, push
-5. Open the MR/PR with `Closes #<n>` in the description
-6. Post in the issue: "✅ Development complete. MR: <link>"
-7. Next issue
+Process each issue in the validated order using `/cwf-issue <n>` logic:
+
+For each issue:
+1. Determine the base branch (main or dependency branch)
+2. Create branch, develop, commit, push, open PR/MR
+3. Post completion comment
+4. Move to next issue
+
+Between issues:
+- `git fetch origin` to get latest state
+- If main was updated (previous PR merged), rebase remaining branches if needed
+- If a dependency branch was updated, rebase the dependent branch on it
 
 ---
 
 ## If $ARGUMENTS contains "--interactive"
 You may ask your questions in the terminal instead of comments.
 ISSUESMD
-  print_ok ".claude/commands/issues.md created"
+  print_ok ".claude/commands/cwf-issues.md created"
 
-  # ── /issue command ──
-  cat > .claude/commands/issue.md << 'ISSUEMD'
+  # ── /cwf-issue command ──
+  cat > .claude/commands/cwf-issue.md << 'ISSUEMD'
 ---
-description: Work on a specific issue. Usage: /issue 42 or /issue 42 --interactive
-allowed-tools: mcp__gitlab__*, mcp__github__*, Bash(git *), Bash(ls *), Bash(cat *), Bash(grep *), Bash(find *), Read, Edit, Write, MultiEdit
+description: Work on a specific issue. Usage: /cwf-issue 42 or /cwf-issue 42 --interactive
+allowed-tools: Bash(curl *), Bash(git *), Bash(ls *), Read, Edit, Write
 ---
 
-# /issue $ARGUMENTS
+# /cwf-issue $ARGUMENTS
 
-Read `.claude/config` to determine the platform and project.
+Read `.claude/config` to get PLATFORM, TOKEN, and project details.
 Extract the issue number from: $ARGUMENTS
 
 ## Step 1 — Read the issue
-Via MCP, retrieve the issue with its number, full description, and comments.
 
-## Step 2 — Explore the codebase
-Identify the concerned repo. Explore its structure. Don't write any code yet.
+**If PLATFORM=GitHub:**
+```
+curl -s -H "Authorization: Bearer $TOKEN" "https://api.github.com/repos/$GITHUB_USERNAME/$GITHUB_REPO/issues/$ISSUE_NUMBER"
+```
+For comments:
+```
+curl -s -H "Authorization: Bearer $TOKEN" "https://api.github.com/repos/$GITHUB_USERNAME/$GITHUB_REPO/issues/$ISSUE_NUMBER/comments"
+```
 
-## Step 3 — Post the plan as a comment on the issue
-Format:
+**If PLATFORM=GitLab:**
+```
+curl -s --header "PRIVATE-TOKEN: $TOKEN" "$GITLAB_URL/api/v4/projects/$GITLAB_NAMESPACE%2F$GITLAB_PROJECT/issues/$ISSUE_NUMBER"
+```
+For comments:
+```
+curl -s --header "PRIVATE-TOKEN: $TOKEN" "$GITLAB_URL/api/v4/projects/$GITLAB_NAMESPACE%2F$GITLAB_PROJECT/issues/$ISSUE_NUMBER/notes"
+```
+
+## Step 2 — Analyze dependencies and determine base branch
+
+1. Read the issue description for dependency mentions (e.g. "depends on #12", "after #8", "blocked by #3")
+2. Check if a branch already exists: `git branch --list "feature/$ISSUE_NUMBER-*" "fix/$ISSUE_NUMBER-*"`
+3. If the issue depends on another issue:
+   - Check if the dependency branch exists locally: `git branch --list "feature/<dep>-*"`
+   - Check if the dependency PR/MR is already merged
+   - If merged → base on `main`
+   - If not merged → base on the dependency branch
+4. If no dependencies → base on `main`
+
+## Step 3 — Explore the codebase
+Explore the project structure. Understand existing code. Don't write any code yet.
+
+## Step 4 — Post the plan as a comment on the issue
+
+**If PLATFORM=GitHub:**
+```
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"body": "..."}' \
+  "https://api.github.com/repos/$GITHUB_USERNAME/$GITHUB_REPO/issues/$ISSUE_NUMBER/comments"
+```
+
+**If PLATFORM=GitLab:**
+```
+curl -s -X POST --header "PRIVATE-TOKEN: $TOKEN" --header "Content-Type: application/json" \
+  -d '{"body": "..."}' \
+  "$GITLAB_URL/api/v4/projects/$GITLAB_NAMESPACE%2F$GITLAB_PROJECT/issues/$ISSUE_NUMBER/notes"
+```
+
+Comment format:
 
 ---
 **🔍 Analysis of issue #<n>**
 
-**Concerned repo:** `<repo-name>`
+**Base branch:** `main` (or `feature/<dep>-<title>` if dependency)
 
 **My understanding:** <summary>
 
@@ -749,23 +865,65 @@ Format:
 Reply `go` for me to begin.
 ---
 
-## Step 4 — Wait for go
+## Step 5 — Wait for go
 Don't write anything in the terminal. Wait for a `go` comment in the issue.
 
-## Step 5 — Develop
-1. `git -C <repo> checkout -b feature/<n>-<short-title>`
-2. Develop the solution
-3. `git -C <repo> add -A && git -C <repo> commit -m "feat: <desc> (closes #<n>)"`
-4. `git -C <repo> push origin feature/<n>-<short-title>`
-5. Open the MR/PR
-6. Post in the issue: "✅ MR opened: <link>"
+## Step 6 — Create branch and develop
+
+1. Make sure we're up to date:
+   ```
+   git fetch origin
+   ```
+
+2. Create the branch from the right base:
+   - If base is `main`: `git checkout -b feature/<n>-<short-title> origin/main`
+   - If base is a dependency branch: `git checkout -b feature/<n>-<short-title> <dependency-branch>`
+
+3. Develop the solution
+
+4. Commit with descriptive messages:
+   ```
+   git add -A && git commit -m "feat: <desc> (closes #<n>)"
+   ```
+
+5. Before pushing, check for conflicts:
+   ```
+   git fetch origin
+   git rebase origin/main  (or rebase on dependency branch)
+   ```
+   If conflicts occur: resolve them, `git add .`, `git rebase --continue`
+
+6. Push:
+   ```
+   git push origin feature/<n>-<short-title>
+   ```
+
+## Step 7 — Open PR/MR via curl
+
+**If PLATFORM=GitHub:**
+```
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"title": "feat: <desc>", "head": "feature/<n>-<short-title>", "base": "main", "body": "Closes #<n>\n\n<description>"}' \
+  "https://api.github.com/repos/$GITHUB_USERNAME/$GITHUB_REPO/pulls"
+```
+Note: if the branch is based on a dependency branch (not yet merged), set `"base"` to that branch name instead of `"main"`.
+
+**If PLATFORM=GitLab:**
+```
+curl -s -X POST --header "PRIVATE-TOKEN: $TOKEN" --header "Content-Type: application/json" \
+  -d '{"source_branch": "feature/<n>-<short-title>", "target_branch": "main", "title": "feat: <desc>", "description": "Closes #<n>\n\n<description>"}' \
+  "$GITLAB_URL/api/v4/projects/$GITLAB_NAMESPACE%2F$GITLAB_PROJECT/merge_requests"
+```
+
+## Step 8 — Post completion comment
+Post in the issue via curl: "✅ MR opened: <link to PR/MR>"
 
 ---
 
 ## If $ARGUMENTS contains "--interactive"
-Ask your questions in the terminal instead of GitLab/GitHub comments.
+Ask your questions in the terminal instead of posting comments.
 ISSUEMD
-  print_ok ".claude/commands/issue.md created"
+  print_ok ".claude/commands/cwf-issue.md created"
 }
 
 # ── Save secrets locally (optional) ──────────────────────────────────────────
@@ -806,30 +964,22 @@ print_summary() {
   echo -e "${GREEN}${BOLD}  Files created:${RESET}"
   echo -e "  • CLAUDE.md"
   echo -e "  • .claude/config"
-  echo -e "  • .claude/commands/status.md"
-  echo -e "  • .claude/commands/issues.md"
-  echo -e "  • .claude/commands/issue.md"
+  echo -e "  • .claude/commands/cwf-status.md"
+  echo -e "  • .claude/commands/cwf-issues.md"
+  echo -e "  • .claude/commands/cwf-issue.md"
+  echo -e "  • .claude/settings.json"
   echo ""
 
   echo -e "${CYAN}${BOLD}  Available commands in Claude Code:${RESET}"
-  echo -e "  ${BOLD}/status${RESET}              → issue and MR status"
-  echo -e "  ${BOLD}/issues${RESET}              → analyze and plan all issues"
-  echo -e "  ${BOLD}/issues start${RESET}        → start after plan validation"
-  echo -e "  ${BOLD}/issue 42${RESET}            → work on issue #42"
-  echo -e "  ${BOLD}/issue 42 --interactive${RESET} → with questions in the terminal"
+  echo -e "  ${BOLD}/cwf-status${RESET}              → issue, branch, and MR status"
+  echo -e "  ${BOLD}/cwf-issues${RESET}              → analyze and plan all issues"
+  echo -e "  ${BOLD}/cwf-issues start${RESET}        → start after plan validation"
+  echo -e "  ${BOLD}/cwf-issue 42${RESET}            → work on issue #42"
+  echo -e "  ${BOLD}/cwf-issue 42 --interactive${RESET} → with questions in the terminal"
   echo ""
 
-  if [ "$PLATFORM" = "GitLab" ]; then
-    echo -e "${CYAN}${BOLD}  Next step:${RESET}"
-    echo -e "  Run ${BOLD}claude${RESET} in this directory"
-    echo -e "  Type ${BOLD}/mcp${RESET} to verify the GitLab connection"
-    echo -e "  If not connected: ${BOLD}claude mcp add --transport http GitLab ${GITLAB_URL}/api/v4/mcp${RESET}"
-  fi
-
-  if [ "$PLATFORM" = "GitHub" ]; then
-    echo -e "${CYAN}${BOLD}  Next step:${RESET}"
-    echo -e "  Run ${BOLD}claude${RESET} in this directory and try ${BOLD}/status${RESET}"
-  fi
+  echo -e "${CYAN}${BOLD}  Next step:${RESET}"
+  echo -e "  Run ${BOLD}claude${RESET} in this directory and try ${BOLD}/cwf-status${RESET}"
 
   echo ""
 }
@@ -849,10 +999,6 @@ main() {
   check_prerequisites
   detect_project
   choose_platform
-
-  if [ "$PLATFORM" = "GitLab" ]; then
-    setup_gitlab_mcp
-  fi
 
   create_workflow_files
   save_secrets

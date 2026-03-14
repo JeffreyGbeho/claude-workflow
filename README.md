@@ -33,11 +33,11 @@ The script asks all the questions and configures everything automatically.
 
 | Command | Description |
 |---------|-------------|
-| `/status` | Status of current issues and MRs |
-| `/issues` | Analyze all issues, suggest an order, wait for approval |
-| `/issues start` | Start working after validation |
-| `/issue 42` | Work on a specific issue |
-| `/issue 42 --interactive` | Same but with questions in the terminal |
+| `/cwf-status` | Status of issues, branches, and MRs |
+| `/cwf-issues` | Analyze all issues, suggest an order, wait for approval |
+| `/cwf-issues start` | Start working after validation |
+| `/cwf-issue 42` | Work on a specific issue |
+| `/cwf-issue 42 --interactive` | Same but with questions in the terminal |
 
 ---
 
