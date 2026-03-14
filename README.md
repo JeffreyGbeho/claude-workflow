@@ -5,13 +5,13 @@ Configure Claude Code on GitHub or GitLab with a single command.
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/claude-workflow/main/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/JeffreyGbeho/claude-workflow/main/bootstrap.sh | bash
 ```
 
 Then reload your terminal, and in any project:
 
 ```bash
-claude-workflow-init
+cwf
 ```
 
 The script asks all the questions and configures everything automatically.
@@ -47,12 +47,12 @@ Updates are checked automatically in the background.
 
 To force an update:
 ```bash
-claude-workflow-init --update
+cwf --update
 ```
 
 To uninstall:
 ```bash
-claude-workflow-init --uninstall
+cwf --uninstall
 ```
 
 ---

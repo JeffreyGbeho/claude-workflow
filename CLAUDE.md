@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-claude-workflow is a CLI tool that configures Claude Code integration on GitHub or GitLab projects with a single command. It installs as `claude-workflow-init` and sets up MCP servers, CLAUDE.md instructions, and slash commands (`/status`, `/issues`, `/issue`) for issue-driven development workflows.
+claude-workflow is a CLI tool that configures Claude Code integration on GitHub or GitLab projects with a single command. It installs as `cwf` and sets up MCP servers, CLAUDE.md instructions, and slash commands (`/status`, `/issues`, `/issue`) for issue-driven development workflows.
 
 ## Architecture
 
 The project is three bash scripts forming an install pipeline:
 
-1. **`bootstrap.sh`** — Entry point run via `curl | bash`. Downloads the other scripts to `~/.claude-workflow/`, creates the `claude-workflow-init` wrapper in the user's PATH, and sets up background auto-updates.
+1. **`bootstrap.sh`** — Entry point run via `curl | bash`. Downloads the other scripts to `~/.claude-workflow/`, creates the `cwf` wrapper in the user's PATH, and sets up background auto-updates.
 
 2. **`src/install-claude-workflow.sh`** — Interactive project configurator. Detects git platform (GitHub/GitLab), collects tokens, verifies API access, then generates: `CLAUDE.md`, `.claude/config`, `.claude/commands/{status,issues,issue}.md`, and optionally `.github/workflows/claude.yml` + sync workflow.
 

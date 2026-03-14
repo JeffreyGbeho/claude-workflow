@@ -3,7 +3,7 @@
 #  update.sh — Checks and applies claude-workflow updates
 # =============================================================================
 
-REPO="YOUR_USERNAME/claude-workflow"
+REPO="JeffreyGbeho/claude-workflow"
 INSTALL_DIR="$HOME/.claude-workflow"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
 SILENT=false
@@ -75,8 +75,8 @@ uninstall() {
 
   # Remove global command
   for dir in "$HOME/.local/bin" "$HOME/bin" "/usr/local/bin"; do
-    if [ -f "$dir/claude-workflow-init" ]; then
-      rm -f "$dir/claude-workflow-init"
+    if [ -f "$dir/cwf" ]; then
+      rm -f "$dir/cwf"
       print_ok "Command removed from $dir"
     fi
   done
