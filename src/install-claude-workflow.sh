@@ -970,16 +970,16 @@ print_summary() {
   echo -e "  • .claude/settings.json"
   echo ""
 
-  echo -e "${CYAN}${BOLD}  Available commands in Claude Code:${RESET}"
-  echo -e "  ${BOLD}/cwf-status${RESET}              → issue, branch, and MR status"
-  echo -e "  ${BOLD}/cwf-issues${RESET}              → analyze and plan all issues"
-  echo -e "  ${BOLD}/cwf-issues start${RESET}        → start after plan validation"
-  echo -e "  ${BOLD}/cwf-issue 42${RESET}            → work on issue #42"
-  echo -e "  ${BOLD}/cwf-issue 42 --interactive${RESET} → with questions in the terminal"
+  echo -e "${CYAN}${BOLD}  Available commands:${RESET}"
+  echo -e "  ${BOLD}cwf status${RESET}              → issue, branch, and MR status"
+  echo -e "  ${BOLD}cwf issues${RESET}              → analyze and plan all issues"
+  echo -e "  ${BOLD}cwf issues start${RESET}        → start after plan validation"
+  echo -e "  ${BOLD}cwf issue 42${RESET}            → work on issue #42"
+  echo -e "  ${BOLD}cwf issue 42 --interactive${RESET} → with questions in the terminal"
   echo ""
 
-  echo -e "${CYAN}${BOLD}  Next step:${RESET}"
-  echo -e "  Run ${BOLD}claude${RESET} in this directory and try ${BOLD}/cwf-status${RESET}"
+  echo -e "${CYAN}${BOLD}  Try it:${RESET}"
+  echo -e "  ${BOLD}cwf status${RESET}"
 
   echo ""
 }

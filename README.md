@@ -11,33 +11,34 @@ curl -fsSL https://raw.githubusercontent.com/JeffreyGbeho/claude-workflow/main/b
 Then reload your terminal, and in any project:
 
 ```bash
-cwf
+cwf init
 ```
 
 The script asks all the questions and configures everything automatically.
 
 ---
 
-## What it does
-
-- Detects whether you're on **GitHub** or **GitLab**
-- Configures the **MCP server** so Claude Code talks to your platform
-- Creates the **CLAUDE.md** file with instructions for Claude
-- Creates the **`/issues`, `/issue`, `/status` commands** in Claude Code
-- Handles **multi-repo** projects (GitLab group with multiple repos)
-- Configures **sync to a public repo** if desired (GitHub)
-
----
-
-## Available commands after installation
+## Usage
 
 | Command | Description |
 |---------|-------------|
-| `/cwf-status` | Status of issues, branches, and MRs |
-| `/cwf-issues` | Analyze all issues, suggest an order, wait for approval |
-| `/cwf-issues start` | Start working after validation |
-| `/cwf-issue 42` | Work on a specific issue |
-| `/cwf-issue 42 --interactive` | Same but with questions in the terminal |
+| `cwf init` | Configure claude-workflow in current project |
+| `cwf status` | Show issues, branches, and MR status |
+| `cwf issues` | Analyze all issues, propose a plan, wait for approval |
+| `cwf issues start` | Start working after plan validation |
+| `cwf issue 42` | Work on a specific issue |
+| `cwf issue 42 --interactive` | Same but with questions in the terminal |
+
+---
+
+## What it does
+
+- Detects whether you're on **GitHub** or **GitLab**
+- Saves your token securely for future use
+- Creates **CLAUDE.md** with workflow rules for Claude
+- Creates **slash commands** (`cwf-status`, `cwf-issues`, `cwf-issue`)
+- Configures **permissions** so Claude can work autonomously (but never touch main)
+- Uses **curl + token** to communicate with GitHub/GitLab APIs
 
 ---
 
@@ -45,14 +46,9 @@ The script asks all the questions and configures everything automatically.
 
 Updates are checked automatically in the background.
 
-To force an update:
 ```bash
-cwf --update
-```
-
-To uninstall:
-```bash
-cwf --uninstall
+cwf --update      # Force update
+cwf --uninstall   # Uninstall
 ```
 
 ---
