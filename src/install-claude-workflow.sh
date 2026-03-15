@@ -6,6 +6,18 @@
 
 set -e
 
+# ── Migration: old wrappers route ALL commands here. Redirect non-init ones ──
+if [ -f "$HOME/.claude-workflow/cwf-main.sh" ]; then
+  case "${1:-}" in
+    update|uninstall|status|issues|issue|--help|-h)
+      exec bash "$HOME/.claude-workflow/cwf-main.sh" "$@"
+      ;;
+    "")
+      exec bash "$HOME/.claude-workflow/cwf-main.sh"
+      ;;
+  esac
+fi
+
 # Restore cursor and exit cleanly on interrupt
 cleanup() { tput cnorm 2>/dev/null || true; }
 trap cleanup EXIT
