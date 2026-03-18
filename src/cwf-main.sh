@@ -59,10 +59,11 @@ trap 'cleanup' EXIT
 
 # ── Run claude non-interactively ────────────────────────────────────────────
 run_claude() {
-  local cmd_file="$1"   # e.g. "cwf-status"
-  local args="$2"       # arguments to substitute for $ARGUMENTS
-  local label="$3"      # e.g. "status" or "issue 42"
+  local cmd_file="$1"    # e.g. "cwf-status"
+  local args="$2"        # arguments to substitute for $ARGUMENTS
+  local label="$3"       # e.g. "status" or "issue 42"
   local spinner_msg="$4" # e.g. "Analyzing project status..."
+  local prompt_prefix="$5" # optional: prepended to prompt for disambiguation
 
   local cmd_path=".claude/commands/${cmd_file}.md"
 
@@ -91,6 +92,7 @@ run_claude() {
   local prompt
   prompt=$(sed '/^---$/,/^---$/d' "$cmd_path")
   prompt="${prompt//\$ARGUMENTS/$args}"
+  [ -n "$prompt_prefix" ] && prompt="${prompt_prefix}"$'\n\n'"${prompt}"
 
   # Display header and start spinner
   print_header "cwf $label"
@@ -157,7 +159,12 @@ case "$1" in
     ;;
   issues)
     shift
-    run_claude "cwf-issues" "$*" "issues${*:+ $*}" "Analyzing issues..."
+    if [ "$1" = "start" ]; then
+      run_claude "cwf-issues" "$*" "issues start" "Starting implementation..." \
+        "IMPORTANT: Skip Steps 1-5 entirely. Go directly to the section that handles the 'start' argument. Read the latest validation comment, then implement each issue in the validated order by creating branches, coding, committing, and opening PRs."
+    else
+      run_claude "cwf-issues" "$*" "issues${*:+ $*}" "Analyzing issues..."
+    fi
     ;;
   issue)
     shift
