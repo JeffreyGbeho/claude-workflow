@@ -14,8 +14,10 @@ CYAN='\033[36m' RED='\033[31m' BLUE='\033[34m' GREEN='\033[32m'
 print_header() { printf "\n${BOLD}${BLUE}  ══════════════════════════════════════════${RESET}\n${BOLD}    %s${RESET}\n${BOLD}${BLUE}  ══════════════════════════════════════════${RESET}\n\n" "$1"; }
 print_error()  { printf "${RED}  ✗ %s${RESET}\n" "$1"; }
 
-# ── Spinner ─────────────────────────────────────────────────────────────────
+# ── Spinner & process management ────────────────────────────────────────────
 SPINNER_PID=""
+CLAUDE_PID=""
+CLAUDE_TMPFILE=""
 
 start_spinner() {
   local msg="$1"
@@ -42,11 +44,18 @@ stop_spinner() {
   fi
 }
 
-cleanup_spinner() {
+cleanup() {
   stop_spinner
+  if [ -n "$CLAUDE_PID" ]; then
+    kill "$CLAUDE_PID" 2>/dev/null
+    wait "$CLAUDE_PID" 2>/dev/null
+    CLAUDE_PID=""
+  fi
+  [ -n "$CLAUDE_TMPFILE" ] && rm -f "$CLAUDE_TMPFILE"
   tput cnorm 2>/dev/null
 }
-trap cleanup_spinner EXIT INT TERM
+trap 'cleanup; exit 130' INT TERM
+trap 'cleanup' EXIT
 
 # ── Run claude non-interactively ────────────────────────────────────────────
 run_claude() {
@@ -87,20 +96,28 @@ run_claude() {
   print_header "cwf $label"
   start_spinner "$spinner_msg"
 
-  # Run claude in non-interactive mode
-  local output exit_code
-  output=$(claude -p --output-format text "$prompt" 2>&1) || exit_code=$?
-  exit_code=${exit_code:-0}
+  # Run claude in background so Ctrl+C can kill it
+  CLAUDE_TMPFILE=$(mktemp)
+  claude -p --output-format text "$prompt" > "$CLAUDE_TMPFILE" 2>&1 &
+  CLAUDE_PID=$!
+
+  wait "$CLAUDE_PID" 2>/dev/null
+  local exit_code=$?
+  CLAUDE_PID=""
 
   stop_spinner
 
   if [ "$exit_code" -ne 0 ]; then
     print_error "Claude exited with code $exit_code"
-    printf "\n%s\n" "$output"
+    printf "\n%s\n" "$(cat "$CLAUDE_TMPFILE")"
+    rm -f "$CLAUDE_TMPFILE"
+    CLAUDE_TMPFILE=""
     exit "$exit_code"
   fi
 
-  printf "%s\n" "$output"
+  cat "$CLAUDE_TMPFILE"
+  rm -f "$CLAUDE_TMPFILE"
+  CLAUDE_TMPFILE=""
 }
 
 # ── Update check (background) ───────────────────────────────────────────────
@@ -140,7 +157,7 @@ case "$1" in
     ;;
   issues)
     shift
-    run_claude "cwf-issues" "$*" "issues" "Analyzing issues..."
+    run_claude "cwf-issues" "$*" "issues${*:+ $*}" "Analyzing issues..."
     ;;
   issue)
     shift
