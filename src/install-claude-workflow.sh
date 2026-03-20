@@ -694,7 +694,7 @@ STATUSMD
   # ── /cwf-issues command ──
   cat > .claude/commands/cwf-issues.md << 'ISSUESMD'
 ---
-description: Read all issues, propose a prioritized order, wait for approval
+description: Analyze all issues, post individual plans, wait for per-issue approval
 allowed-tools: Bash(curl *), Bash(git *), Bash(ls *), Read, Edit, Write
 ---
 
@@ -716,25 +716,29 @@ curl -s --header "PRIVATE-TOKEN: $TOKEN" "$GITLAB_URL/api/v4/projects/$GITLAB_NA
 
 For each issue, extract: number, title, description, labels.
 
-## Step 2 — Analyze dependencies and local state
+## Step 2 — Analyze dependencies and determine order
 For each issue, identify:
 - Issues mentioned in its description (dependencies like "depends on #12", "after #8", "blocked by #3")
 - Its nature: foundation / feature / bugfix / improvement
-- Check `git branch` to see if a branch already exists for this issue (pattern: `feature/<n>-*` or `fix/<n>-*`)
+- Check `git branch -a` to see if a branch already exists for this issue (pattern: `feature/<n>-*` or `fix/<n>-*`)
 - If a branch exists, check its PR/MR status via curl
 
-## Step 3 — Propose a logical order
 Sort by priority:
 1. Foundations first (data models, configs, base structures)
 2. Then independent features
 3. Finally features that depend on previous ones
 4. Skip issues that already have a merged PR/MR
 
-For each issue, specify:
+For each issue, determine:
 - **Base branch**: `main` if independent, or `feature/<dep>-*` if it depends on an unmerged issue
 - **Status**: new / in progress / PR open / merged
 
-## Step 4 — Post the plan as a comment on the oldest issue
+## Step 3 — Explore the codebase
+Explore the project structure and understand existing code to be able to write a relevant implementation plan for each issue.
+
+## Step 4 — Post an individual comment on EACH issue
+
+For each issue (in priority order), post a comment **on that issue**.
 
 **If PLATFORM=GitHub:**
 ```
@@ -750,49 +754,97 @@ curl -s -X POST --header "PRIVATE-TOKEN: $TOKEN" --header "Content-Type: applica
   "$GITLAB_URL/api/v4/projects/$GITLAB_NAMESPACE%2F$GITLAB_PROJECT/issues/$ISSUE_NUMBER/notes"
 ```
 
-Comment format:
+### Comment format for issues WITHOUT unanswered questions:
 
----
-**📋 Processing plan — awaiting validation**
+```
+🔍 **Analyse de l'issue #<n> — <title>**
 
-I've analyzed **X open issues**. Here's the order I propose:
+**Priorité :** <order>/<total> — <type: Foundation / Feature / Bugfix / Improvement>
+**Branche :** `feature/<n>-<short-title>` depuis `<base_branch>`
+<if no dependencies>
+**Dépendances :** Aucune
+<if has dependencies>
+**⛔ Bloqué par #<dep>** — cette issue doit être terminée et mergée avant de commencer celle-ci.
 
-| # | Issue | Base branch | Reason |
-|---|-------|-------------|--------|
-| 1 | #12 · Title | `main` | Foundation for #15 |
-| 2 | #8 · Title | `main` | Independent |
-| 3 | #15 · Title | `feature/12-api` | Depends on #12 (not yet merged) |
+**Mon plan :**
+1. <step 1>
+2. <step 2>
+3. <step 3>
 
-To start, reply to this comment:
-- `go` → I'll begin in this order
-- `go 8,12,15` → custom order
-- `skip #8` → skip this issue
----
+**Questions :** Aucune, prêt à commencer.
 
-## Step 5 — Wait without writing anything in the terminal
-After posting the comment, stop completely.
+Répondez `go` pour lancer l'implémentation.
+```
+
+### Comment format for issues WITH questions:
+
+```
+🔍 **Analyse de l'issue #<n> — <title>**
+
+**Priorité :** <order>/<total> — <type>
+**Branche :** `feature/<n>-<short-title>` depuis `<base_branch>`
+<dependencies same as above>
+
+**Mon plan :**
+1. <step 1>
+2. <step 2>
+3. <step 3>
+
+**❓ Questions :**
+- <question 1>
+- <question 2>
+
+⚠️ Cette issue nécessite des clarifications avant implémentation. Répondez aux questions ci-dessus puis écrivez `go` pour valider.
+```
+
+Think like a senior developer joining the project: ask questions when the issue description is vague, ambiguous, or missing important details (tech choices, edge cases, expected behavior, design decisions). If the issue is clear enough, don't force questions.
+
+## Step 5 — Output terminal summary
+
+After posting all comments, output a summary table to stdout (this will be displayed in the user's terminal):
+
+```
+  #     Issue                          Status                Dépendances
+  #12   Tic tac toe initialisation     ✅ Prêt (go?)         —
+  #15   Scoreboard                     ⛔ Bloqué par #12     needs clarification
+  #18   Settings du game               ⛔ Bloqué par #12     ✅ Prêt (go?)
+```
+
+Then stop. Do not write code.
 
 ---
 
 ## If $ARGUMENTS contains "start"
-Read the latest validation comment in the issue.
-Process each issue in the validated order using `/cwf-issue <n>` logic:
 
-For each issue:
+This mode implements validated issues. For each issue (in priority order):
+
+1. Read comments on the issue via curl
+2. Check if there is a `go` reply — if not, skip this issue
+3. Check if there were questions (❓) — if unanswered, skip this issue
+4. Check dependencies — if the blocking issue's PR is not yet merged, skip this issue
+
+For each validated and unblocked issue:
 1. Determine the base branch (main or dependency branch)
-2. Create branch, develop, commit, push, open PR/MR
-3. Post completion comment
-4. Move to next issue
+2. `git fetch origin` and create branch from base
+3. Develop the solution (read the plan from the comment you posted earlier)
+4. Commit with descriptive messages: `git add -A && git commit -m "feat: <desc> (closes #<n>)"`
+5. Rebase on base branch if needed, push
+6. Open PR/MR via curl (set base to dependency branch if not merged, otherwise main)
+7. Post completion comment on the issue: "✅ PR opened: <link>"
+8. Move to next issue
 
-Between issues:
-- `git fetch origin` to get latest state
-- If main was updated (previous PR merged), rebase remaining branches if needed
-- If a dependency branch was updated, rebase the dependent branch on it
+Output a terminal summary at the end:
+```
+  #     Issue                          Result
+  #12   Tic tac toe initialisation     ✅ PR #4 opened
+  #15   Scoreboard                     ⏭️  Skipped (no go)
+  #18   Settings du game               ⏭️  Skipped (blocked by #12)
+```
 
 ---
 
 ## If $ARGUMENTS contains "--interactive"
-You may ask your questions in the terminal instead of comments.
+You may ask your questions in the terminal instead of posting comments.
 ISSUESMD
   print_ok ".claude/commands/cwf-issues.md created"
 
