@@ -158,7 +158,7 @@ case "$1" in
       print_error "  curl -fsSL https://raw.githubusercontent.com/JeffreyGbeho/claude-workflow/main/bootstrap.sh | bash"
       exit 1
     fi
-    exec bash "$INSTALL_DIR/install-claude-workflow.sh"
+    exec bash "$INSTALL_DIR/install-claude-workflow.sh" init
     ;;
   status)
     run_claude "cwf-status" "" "status" "Analyzing project status..."
