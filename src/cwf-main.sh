@@ -11,8 +11,8 @@ INSTALL_DIR="$HOME/.claude-workflow"
 BOLD='\033[1m'  RESET='\033[0m'
 CYAN='\033[36m' RED='\033[31m' BLUE='\033[34m' GREEN='\033[32m'
 
-print_header() { printf "\n${BOLD}${BLUE}  ══════════════════════════════════════════${RESET}\n${BOLD}    %s${RESET}\n${BOLD}${BLUE}  ══════════════════════════════════════════${RESET}\n\n" "$1"; }
-print_error()  { printf "${RED}  ✗ %s${RESET}\n" "$1"; }
+print_header() { printf "\n${BOLD}${BLUE}  ══════════════════════════════════════════${RESET}\n${BOLD}    %s${RESET}\n${BOLD}${BLUE}  ══════════════════════════════════════════${RESET}\n\n" "$1" >&2; }
+print_error()  { printf "${RED}  ✗ %s${RESET}\n" "$1" >&2; }
 
 # ── Spinner & process management ────────────────────────────────────────────
 SPINNER_PID=""
@@ -22,11 +22,11 @@ CLAUDE_TMPFILE=""
 start_spinner() {
   local msg="$1"
   local frames="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-  tput civis 2>/dev/null  # hide cursor
+  tput civis >&2 2>/dev/null  # hide cursor
   (
     i=0
     while true; do
-      printf "\r${CYAN}  %s${RESET} %s" "${frames:i%${#frames}:1}" "$msg"
+      printf "\r${CYAN}  %s${RESET} %s" "${frames:i%${#frames}:1}" "$msg" >&2
       i=$((i + 1))
       sleep 0.08
     done
@@ -39,8 +39,8 @@ stop_spinner() {
     kill "$SPINNER_PID" 2>/dev/null
     wait "$SPINNER_PID" 2>/dev/null
     SPINNER_PID=""
-    printf "\r\033[K"  # clear line
-    tput cnorm 2>/dev/null  # restore cursor
+    printf "\r\033[K" >&2  # clear line
+    tput cnorm >&2 2>/dev/null  # restore cursor
   fi
 }
 
@@ -52,7 +52,7 @@ cleanup() {
     CLAUDE_PID=""
   fi
   [ -n "$CLAUDE_TMPFILE" ] && rm -f "$CLAUDE_TMPFILE"
-  tput cnorm 2>/dev/null
+  tput cnorm >&2 2>/dev/null
 }
 trap 'cleanup; exit 130' INT TERM
 trap 'cleanup' EXIT
@@ -84,7 +84,8 @@ run_claude() {
   # --interactive flag → fallback to TUI mode
   if [[ "$args" == *"--interactive"* ]]; then
     args="${args//--interactive/}"
-    args="$(echo "$args" | xargs)"  # trim whitespace
+    args="${args#"${args%%[![:space:]]*}"}"  # trim leading whitespace
+    args="${args%"${args##*[![:space:]]}"}"  # trim trailing whitespace
     exec claude "/${cmd_file} $args"
   fi
 
@@ -111,7 +112,7 @@ run_claude() {
 
   if [ "$exit_code" -ne 0 ]; then
     print_error "Claude exited with code $exit_code"
-    printf "\n%s\n" "$(cat "$CLAUDE_TMPFILE")"
+    cat "$CLAUDE_TMPFILE" >&2
     rm -f "$CLAUDE_TMPFILE"
     CLAUDE_TMPFILE=""
     exit "$exit_code"
@@ -122,14 +123,14 @@ run_claude() {
   CLAUDE_TMPFILE=""
 }
 
-# ── Update check (background) ───────────────────────────────────────────────
+# ── Update check (background, silent) ───────────────────────────────────────
 if [ -f "$INSTALL_DIR/update.sh" ]; then
-  bash "$INSTALL_DIR/update.sh" --silent &
+  bash "$INSTALL_DIR/update.sh" --silent >/dev/null 2>&1 &
 fi
 
 # ── Show update notice if available ──────────────────────────────────────────
 if [ -f "$INSTALL_DIR/update.sh" ]; then
-  bash "$INSTALL_DIR/update.sh" --notice
+  bash "$INSTALL_DIR/update.sh" --notice >&2
 fi
 
 # ── Help ─────────────────────────────────────────────────────────────────────
@@ -152,6 +153,11 @@ show_help() {
 # ── Command routing ──────────────────────────────────────────────────────────
 case "$1" in
   init)
+    if [ ! -f "$INSTALL_DIR/install-claude-workflow.sh" ]; then
+      print_error "Installer not found. Reinstall cwf:"
+      print_error "  curl -fsSL https://raw.githubusercontent.com/JeffreyGbeho/claude-workflow/main/bootstrap.sh | bash"
+      exit 1
+    fi
     exec bash "$INSTALL_DIR/install-claude-workflow.sh"
     ;;
   status)
@@ -168,21 +174,35 @@ case "$1" in
     ;;
   issue)
     shift
+    if [ -z "$1" ] || [[ "$1" == -* ]]; then
+      print_error "Missing issue number. Usage: cwf issue <number>"
+      exit 1
+    fi
     run_claude "cwf-issue" "$*" "issue $*" "Working on issue..."
     ;;
   update)
+    if [ ! -f "$INSTALL_DIR/update.sh" ]; then
+      print_error "Update script not found. Reinstall cwf:"
+      print_error "  curl -fsSL https://raw.githubusercontent.com/JeffreyGbeho/claude-workflow/main/bootstrap.sh | bash"
+      exit 1
+    fi
     exec bash "$INSTALL_DIR/update.sh" --update
     ;;
   uninstall)
+    if [ ! -f "$INSTALL_DIR/update.sh" ]; then
+      print_error "Uninstall script not found. Remove manually:"
+      print_error "  rm -rf ~/.claude-workflow && rm -f \$(which cwf)"
+      exit 1
+    fi
     exec bash "$INSTALL_DIR/update.sh" --uninstall
     ;;
   ""|--help|-h)
     show_help
     ;;
   *)
-    echo "Unknown command: $1"
-    echo ""
-    show_help
+    print_error "Unknown command: $1"
+    echo "" >&2
+    show_help >&2
     exit 1
     ;;
 esac
