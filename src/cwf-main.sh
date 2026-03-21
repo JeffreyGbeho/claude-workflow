@@ -7,45 +7,20 @@
 
 INSTALL_DIR="$HOME/.claude-workflow"
 
-# ── Colors & helpers ────────────────────────────────────────────────────────
-BOLD='\033[1m'  RESET='\033[0m'
-CYAN='\033[36m' RED='\033[31m' BLUE='\033[34m' GREEN='\033[32m'
+# ── Source shared libraries ───────────────────────────────────────────────────
+source "$INSTALL_DIR/lib/colors.sh"
+source "$INSTALL_DIR/lib/spinner.sh"
 
+# Override print_header and print_error to stderr (keep stdout clean for Claude)
 print_header() { printf "\n${BOLD}${BLUE}  ══════════════════════════════════════════${RESET}\n${BOLD}    %s${RESET}\n${BOLD}${BLUE}  ══════════════════════════════════════════${RESET}\n\n" "$1" >&2; }
 print_error()  { printf "${RED}  ✗ %s${RESET}\n" "$1" >&2; }
 
-# ── Spinner & process management ────────────────────────────────────────────
-SPINNER_PID=""
+# ── Process management ────────────────────────────────────────────────────────
 CLAUDE_PID=""
 CLAUDE_TMPFILE=""
 
-start_spinner() {
-  local msg="$1"
-  local frames="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-  tput civis >&2 2>/dev/null  # hide cursor
-  (
-    i=0
-    while true; do
-      printf "\r${CYAN}  %s${RESET} %s" "${frames:i%${#frames}:1}" "$msg" >&2
-      i=$((i + 1))
-      sleep 0.08
-    done
-  ) &
-  SPINNER_PID=$!
-}
-
-stop_spinner() {
-  if [ -n "$SPINNER_PID" ]; then
-    kill "$SPINNER_PID" 2>/dev/null
-    wait "$SPINNER_PID" 2>/dev/null
-    SPINNER_PID=""
-    printf "\r\033[K" >&2  # clear line
-    tput cnorm >&2 2>/dev/null  # restore cursor
-  fi
-}
-
 cleanup() {
-  stop_spinner
+  cleanup_spinner
   if [ -n "$CLAUDE_PID" ]; then
     kill "$CLAUDE_PID" 2>/dev/null
     wait "$CLAUDE_PID" 2>/dev/null
@@ -144,14 +119,19 @@ show_help() {
   echo "  issues start            Start working after plan validation"
   echo "  issue <n>               Work on a specific issue"
   echo "  issue <n> --interactive Work on issue with terminal questions"
+  echo "  watch                   Watch for events and auto-act on issues"
   echo "  update                  Update cwf to latest version"
   echo "  uninstall               Uninstall cwf"
   echo ""
   echo "  cwf --help              Show this help"
+  echo "  cwf --version           Show version"
 }
 
 # ── Command routing ──────────────────────────────────────────────────────────
 case "$1" in
+  --version|-v)
+    echo "cwf v$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")"
+    ;;
   init)
     if [ ! -f "$INSTALL_DIR/install-claude-workflow.sh" ]; then
       print_error "Installer not found. Reinstall cwf:"
@@ -179,6 +159,14 @@ case "$1" in
       exit 1
     fi
     run_claude "cwf-issue" "$*" "issue $*" "Working on issue..."
+    ;;
+  watch)
+    shift
+    if [ ! -f "$INSTALL_DIR/watch.sh" ]; then
+      print_error "Watch module not found. Run 'cwf update' to install it."
+      exit 1
+    fi
+    exec bash "$INSTALL_DIR/watch.sh" "$@"
     ;;
   update)
     if [ ! -f "$INSTALL_DIR/update.sh" ]; then

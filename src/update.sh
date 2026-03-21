@@ -8,9 +8,15 @@ INSTALL_DIR="$HOME/.claude-workflow"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
 UPDATE_FLAG="$INSTALL_DIR/.update-available"
 
-print_ok()   { echo -e "\033[32m  ✓ $1\033[0m"; }
-print_info() { echo -e "\033[2m  $1\033[0m"; }
-print_step() { echo -e "\033[36m\033[1m▶ $1\033[0m"; }
+# ── Source shared colors library (with inline fallback for old installs) ─────
+if [ -f "$INSTALL_DIR/lib/colors.sh" ]; then
+  source "$INSTALL_DIR/lib/colors.sh"
+else
+  print_ok()   { echo -e "\033[32m  ✓ $1\033[0m"; }
+  print_info() { echo -e "\033[2m  $1\033[0m"; }
+  print_step() { echo -e "\033[36m\033[1m▶ $1\033[0m"; }
+  print_error(){ echo -e "\033[31m  ✗ $1\033[0m"; }
+fi
 
 # ── Silent check (background) — just write a flag if update available ────────
 check_silent() {
@@ -46,7 +52,7 @@ apply_update() {
   remote_version=$(curl -fsSL --max-time 10 "${RAW_BASE}/VERSION" 2>/dev/null || echo "")
 
   if [ -z "$remote_version" ]; then
-    echo -e "\033[31m  ✗ Could not reach update server\033[0m"
+    print_error "Could not reach update server"
     return 1
   fi
 
@@ -60,6 +66,7 @@ apply_update() {
 
   print_step "Updating v${local_version} → v${remote_version}..."
 
+  # Download core scripts
   curl -fsSL "${RAW_BASE}/src/install-claude-workflow.sh" -o "$INSTALL_DIR/install-claude-workflow.sh" && \
     chmod +x "$INSTALL_DIR/install-claude-workflow.sh"
 
@@ -68,6 +75,22 @@ apply_update() {
 
   curl -fsSL "${RAW_BASE}/src/cwf-main.sh" -o "$INSTALL_DIR/cwf-main.sh" && \
     chmod +x "$INSTALL_DIR/cwf-main.sh"
+
+  # Download shared libraries
+  mkdir -p "$INSTALL_DIR/lib"
+
+  curl -fsSL "${RAW_BASE}/src/lib/colors.sh" -o "$INSTALL_DIR/lib/colors.sh" && \
+    chmod +x "$INSTALL_DIR/lib/colors.sh"
+
+  curl -fsSL "${RAW_BASE}/src/lib/spinner.sh" -o "$INSTALL_DIR/lib/spinner.sh" && \
+    chmod +x "$INSTALL_DIR/lib/spinner.sh"
+
+  curl -fsSL "${RAW_BASE}/src/lib/api.sh" -o "$INSTALL_DIR/lib/api.sh" && \
+    chmod +x "$INSTALL_DIR/lib/api.sh"
+
+  # Download watch module
+  curl -fsSL "${RAW_BASE}/src/watch.sh" -o "$INSTALL_DIR/watch.sh" && \
+    chmod +x "$INSTALL_DIR/watch.sh"
 
   # Migrate old fat wrapper to thin launcher
   for dir in "$HOME/.local/bin" "$HOME/bin" "/usr/local/bin"; do

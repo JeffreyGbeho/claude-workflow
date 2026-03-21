@@ -23,44 +23,20 @@ cleanup() { tput cnorm 2>/dev/null || true; }
 trap cleanup EXIT
 trap 'cleanup; exit 130' INT TERM
 
-# ── Colors ───────────────────────────────────────────────────────────────────
-BOLD="\033[1m"
-DIM="\033[2m"
-RESET="\033[0m"
-GREEN="\033[32m"
-BLUE="\033[34m"
-YELLOW="\033[33m"
-RED="\033[31m"
-CYAN="\033[36m"
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-print_header() {
-  echo ""
-  echo -e "${BLUE}${BOLD}══════════════════════════════════════════════════════${RESET}"
-  echo -e "${BLUE}${BOLD}  $1${RESET}"
-  echo -e "${BLUE}${BOLD}══════════════════════════════════════════════════════${RESET}"
-  echo ""
-}
-
-print_step() {
-  echo -e "${CYAN}${BOLD}▶ $1${RESET}"
-}
-
-print_ok() {
-  echo -e "${GREEN}  ✓ $1${RESET}"
-}
-
-print_warn() {
-  echo -e "${YELLOW}  ⚠ $1${RESET}"
-}
-
-print_error() {
-  echo -e "${RED}  ✗ $1${RESET}"
-}
-
-print_info() {
-  echo -e "${DIM}  $1${RESET}"
-}
+# ── Source shared colors library (with inline fallback for old installs) ─────
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.claude-workflow}"
+if [ -f "$INSTALL_DIR/lib/colors.sh" ]; then
+  source "$INSTALL_DIR/lib/colors.sh"
+else
+  BOLD="\033[1m"; DIM="\033[2m"; RESET="\033[0m"
+  GREEN="\033[32m"; BLUE="\033[34m"; YELLOW="\033[33m"; RED="\033[31m"; CYAN="\033[36m"
+  print_header() { echo ""; echo -e "${BLUE}${BOLD}══════════════════════════════════════════════════════${RESET}"; echo -e "${BLUE}${BOLD}  $1${RESET}"; echo -e "${BLUE}${BOLD}══════════════════════════════════════════════════════${RESET}"; echo ""; }
+  print_step()   { echo -e "${CYAN}${BOLD}▶ $1${RESET}"; }
+  print_ok()     { echo -e "${GREEN}  ✓ $1${RESET}"; }
+  print_warn()   { echo -e "${YELLOW}  ⚠ $1${RESET}"; }
+  print_error()  { echo -e "${RED}  ✗ $1${RESET}"; }
+  print_info()   { echo -e "${DIM}  $1${RESET}"; }
+fi
 
 ask() {
   # ask "Question" VAR_NAME [default]
@@ -519,6 +495,22 @@ configure_github_sync_token() {
   ask_secret "Sync token for public repo" GITHUB_SYNC_TOKEN
 }
 
+# ── Watch configuration ──────────────────────────────────────────────────────
+configure_watch() {
+  print_header "Watch Mode"
+
+  print_info "cwf watch monitors your issues for 'go' comments and new events."
+  print_info "You can change these settings later in .claude/config."
+  echo ""
+
+  ask_choice "Watch mode:" WATCH_MODE \
+    "semi-auto" \
+    "notify" \
+    "full-auto"
+
+  echo ""
+  ask "Polling interval in seconds" POLL_INTERVAL "30"
+}
 
 # ── Create workflow files ─────────────────────────────────────────────────────
 create_workflow_files() {
@@ -586,6 +578,8 @@ $([ -n "$GITHUB_PUBLIC_REPO" ] && echo "GITHUB_PUBLIC_REPO=${GITHUB_PUBLIC_REPO}
 GITHUBCONF
 )
 WORKFLOW_MODE=${WORKFLOW_MODE}
+WATCH_MODE=${WATCH_MODE}
+POLL_INTERVAL=${POLL_INTERVAL}
 CONFIG
   print_ok ".claude/config created"
 
@@ -633,13 +627,12 @@ CONFIG
 SETTINGSJSON
   print_ok ".claude/settings.json created"
 
-  # Add .claude/config to .gitignore (contains token)
+  # Add .claude/config and .claude-workflow/ to .gitignore
   if [ -f ".gitignore" ]; then
-    if ! grep -q ".claude/config" .gitignore; then
-      echo ".claude/config" >> .gitignore
-    fi
+    grep -q ".claude/config" .gitignore || echo ".claude/config" >> .gitignore
+    grep -q ".claude-workflow/" .gitignore || echo ".claude-workflow/" >> .gitignore
   else
-    echo ".claude/config" > .gitignore
+    printf ".claude/config\n.claude-workflow/\n" > .gitignore
   fi
 
   # ── /cwf-status command ──
@@ -1040,6 +1033,7 @@ print_summary() {
   echo -e "  ${BOLD}cwf issues start${RESET}        → start after plan validation"
   echo -e "  ${BOLD}cwf issue 42${RESET}            → work on issue #42"
   echo -e "  ${BOLD}cwf issue 42 --interactive${RESET} → with questions in the terminal"
+  echo -e "  ${BOLD}cwf watch${RESET}               → watch for events and auto-act"
   echo ""
 
   echo -e "${CYAN}${BOLD}  Try it:${RESET}"
@@ -1063,6 +1057,7 @@ main() {
   check_prerequisites
   detect_project
   choose_platform
+  configure_watch
 
   create_workflow_files
   save_secrets

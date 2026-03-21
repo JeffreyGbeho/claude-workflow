@@ -106,6 +106,25 @@ download_files() {
   chmod +x "$INSTALL_DIR/cwf-main.sh"
   print_ok "CLI router downloaded"
 
+  # Download shared libraries
+  mkdir -p "$INSTALL_DIR/lib"
+
+  curl -fsSL "${RAW_BASE}/src/lib/colors.sh" -o "$INSTALL_DIR/lib/colors.sh"
+  chmod +x "$INSTALL_DIR/lib/colors.sh"
+
+  curl -fsSL "${RAW_BASE}/src/lib/spinner.sh" -o "$INSTALL_DIR/lib/spinner.sh"
+  chmod +x "$INSTALL_DIR/lib/spinner.sh"
+
+  curl -fsSL "${RAW_BASE}/src/lib/api.sh" -o "$INSTALL_DIR/lib/api.sh"
+  chmod +x "$INSTALL_DIR/lib/api.sh"
+
+  print_ok "Shared libraries downloaded"
+
+  # Download watch module
+  curl -fsSL "${RAW_BASE}/src/watch.sh" -o "$INSTALL_DIR/watch.sh"
+  chmod +x "$INSTALL_DIR/watch.sh"
+  print_ok "Watch module downloaded"
+
   # Save installed version
   curl -fsSL "${RAW_BASE}/VERSION" -o "$INSTALL_DIR/VERSION" 2>/dev/null || echo "1.0.0" > "$INSTALL_DIR/VERSION"
   local version
@@ -168,6 +187,7 @@ print_success() {
   echo -e "  ${BOLD}cwf status${RESET}              → see issues and MR status"
   echo -e "  ${BOLD}cwf issues${RESET}              → plan all issues"
   echo -e "  ${BOLD}cwf issue 42${RESET}            → work on issue #42"
+  echo -e "  ${BOLD}cwf watch${RESET}               → watch for events and auto-act"
   echo ""
   echo -e "${DIM}  cwf update      Update to latest version${RESET}"
   echo -e "${DIM}  cwf uninstall   Uninstall${RESET}"
