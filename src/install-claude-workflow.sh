@@ -982,14 +982,24 @@ This mode skips planning — the plan has already been posted and validated with
 5. Read any subsequent comments (answers to questions, additional context from the user)
 6. Use all this context to understand what to implement
 
+**CRITICAL — Check dependencies before implementing:**
+- If the planning comment mentions `⛔ Bloqué par #<dep>`, check if the blocking issue's PR/MR has been merged
+- Check for open PRs via curl: look for a PR whose title or body contains `#<dep>` and whose state is `merged`
+- If the blocking PR is NOT merged yet → do NOT implement. Post a comment:
+  ```
+  ⏸️ L'implémentation de #<n> est en attente : #<dep> n'est pas encore mergé.
+  ```
+  Then stop.
+- If the blocking PR IS merged (or there are no dependencies) → proceed with implementation
+
 Then implement:
 1. `git fetch origin`
-2. Determine base branch from the plan (main or dependency branch)
+2. Determine base branch from the plan (main or dependency branch — if dependency PR is merged, use main)
 3. Create branch: `git checkout -b feature/<n>-<short-title> <base>`
 4. Develop the solution following the plan
 5. `git add -A && git commit -m "feat: <desc> (closes #<n>)"`
 6. `git rebase origin/<base>` if needed, then push
-7. Open PR/MR via curl (set base to dependency branch if not merged, otherwise main)
+7. Open PR/MR via curl (base is always `main` if dependency is merged)
 8. Post completion comment on the issue: "✅ PR ouvert: <link to PR/MR>"
 
 Do NOT re-post a planning comment. Go straight to implementation.

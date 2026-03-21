@@ -160,7 +160,7 @@ case "$1" in
       print_error "Missing issue number. Usage: cwf issue <number>"
       exit 1
     fi
-    local issue_num="$1"
+    issue_num="$1"
     shift
     if [ "${1:-}" = "start" ]; then
       shift
