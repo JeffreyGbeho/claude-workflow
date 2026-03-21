@@ -635,6 +635,18 @@ SETTINGSJSON
     printf ".claude/config\n.claude-workflow/\n" > .gitignore
   fi
 
+  # ── /cwf command files ──
+  # Copy shipped templates if available, otherwise use inline heredocs as fallback
+  if [ -d "$INSTALL_DIR/commands" ]; then
+    cp "$INSTALL_DIR/commands/cwf-status.md" .claude/commands/cwf-status.md 2>/dev/null && \
+      print_ok ".claude/commands/cwf-status.md created" || true
+    cp "$INSTALL_DIR/commands/cwf-issues.md" .claude/commands/cwf-issues.md 2>/dev/null && \
+      print_ok ".claude/commands/cwf-issues.md created" || true
+    cp "$INSTALL_DIR/commands/cwf-issue.md" .claude/commands/cwf-issue.md 2>/dev/null && \
+      print_ok ".claude/commands/cwf-issue.md created" || true
+  else
+    # Fallback: inline heredocs for old installs without shipped templates
+
   # ── /cwf-status command ──
   cat > .claude/commands/cwf-status.md << 'STATUSMD'
 ---
@@ -1041,6 +1053,8 @@ Do NOT implement anything. Only respond to comments and update the plan if neede
 Ask your questions in the terminal instead of posting comments.
 ISSUEMD
   print_ok ".claude/commands/cwf-issue.md created"
+
+  fi  # end of fallback heredoc block
 }
 
 # ── Save secrets locally (optional) ──────────────────────────────────────────

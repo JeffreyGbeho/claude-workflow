@@ -125,6 +125,13 @@ download_files() {
   chmod +x "$INSTALL_DIR/watch.sh"
   print_ok "Watch module downloaded"
 
+  # Download command templates
+  mkdir -p "$INSTALL_DIR/commands"
+  curl -fsSL "${RAW_BASE}/src/commands/cwf-status.md" -o "$INSTALL_DIR/commands/cwf-status.md"
+  curl -fsSL "${RAW_BASE}/src/commands/cwf-issues.md" -o "$INSTALL_DIR/commands/cwf-issues.md"
+  curl -fsSL "${RAW_BASE}/src/commands/cwf-issue.md" -o "$INSTALL_DIR/commands/cwf-issue.md"
+  print_ok "Command templates downloaded"
+
   # Save installed version
   curl -fsSL "${RAW_BASE}/VERSION" -o "$INSTALL_DIR/VERSION" 2>/dev/null || echo "1.0.0" > "$INSTALL_DIR/VERSION"
   local version

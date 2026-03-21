@@ -126,11 +126,17 @@ is_issue_running() {
 # ── "Go" detection ───────────────────────────────────────────────────────────
 is_go_comment() {
   local body
-  body=$(echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  # Normalize: lowercase, strip whitespace, strip JSON escape sequences (\r\n)
+  body=$(echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/\\[rn]//g;s/^[[:space:]]*//;s/[[:space:]]*$//')
   case "$body" in
     "go"|"go!"|"lgtm"|"approved"|"ship it") return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# Check if a GitHub issue JSON has a pull_request key (meaning it's a PR, not an issue)
+is_pull_request() {
+  echo "$1" | grep -q '"pull_request"'
 }
 
 # ── Timestamp helpers ─────────────────────────────────────────────────────────
@@ -165,6 +171,9 @@ check_new_comments() {
   since=$(state_get_last_poll)
 
   while IFS= read -r issue_json; do
+    # Skip pull requests (GitHub returns PRs in /issues endpoint)
+    [ "$PLATFORM" = "GitHub" ] && is_pull_request "$issue_json" && continue
+
     local issue_number
     if [ "$PLATFORM" = "GitHub" ]; then
       issue_number=$(json_extract_raw "$issue_json" "number")
@@ -250,6 +259,9 @@ check_new_issues() {
   local issues_json="$1"
 
   while IFS= read -r issue_json; do
+    # Skip pull requests (GitHub returns PRs in /issues endpoint)
+    [ "$PLATFORM" = "GitHub" ] && is_pull_request "$issue_json" && continue
+
     local issue_number title
     if [ "$PLATFORM" = "GitHub" ]; then
       issue_number=$(json_extract_raw "$issue_json" "number")
@@ -548,6 +560,9 @@ main() {
     local unplanned=()
 
     while IFS= read -r issue_json; do
+      # Skip pull requests (GitHub returns PRs in /issues endpoint)
+      [ "$PLATFORM" = "GitHub" ] && is_pull_request "$issue_json" && continue
+
       local issue_number title
       if [ "$PLATFORM" = "GitHub" ]; then
         issue_number=$(json_extract_raw "$issue_json" "number")

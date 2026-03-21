@@ -93,6 +93,12 @@ apply_update() {
   curl -fsSL "${RAW_BASE}/src/watch.sh" -o "$INSTALL_DIR/watch.sh" && \
     chmod +x "$INSTALL_DIR/watch.sh"
 
+  # Download command templates
+  mkdir -p "$INSTALL_DIR/commands"
+  curl -fsSL "${RAW_BASE}/src/commands/cwf-status.md" -o "$INSTALL_DIR/commands/cwf-status.md" 2>/dev/null || true
+  curl -fsSL "${RAW_BASE}/src/commands/cwf-issues.md" -o "$INSTALL_DIR/commands/cwf-issues.md" 2>/dev/null || true
+  curl -fsSL "${RAW_BASE}/src/commands/cwf-issue.md" -o "$INSTALL_DIR/commands/cwf-issue.md" 2>/dev/null || true
+
   # Self-update (last, after all other downloads)
   curl -fsSL "${RAW_BASE}/src/update.sh" -o "$INSTALL_DIR/update.sh" && \
     chmod +x "$INSTALL_DIR/update.sh"

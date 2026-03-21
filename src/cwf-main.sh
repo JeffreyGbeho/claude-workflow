@@ -40,12 +40,15 @@ run_claude() {
   local spinner_msg="$4" # e.g. "Analyzing project status..."
   local prompt_prefix="$5" # optional: prepended to prompt for disambiguation
 
-  local cmd_path=".claude/commands/${cmd_file}.md"
-
-  # Check command file exists (project must be initialized)
+  # Prefer shipped templates (always up-to-date), fallback to project-local
+  local cmd_path="$INSTALL_DIR/commands/${cmd_file}.md"
   if [ ! -f "$cmd_path" ]; then
-    print_error "Command file not found: $cmd_path"
-    print_error "Run 'cwf init' first to configure this project."
+    cmd_path=".claude/commands/${cmd_file}.md"
+  fi
+
+  # Check command file exists
+  if [ ! -f "$cmd_path" ]; then
+    print_error "Command file not found. Run 'cwf init' first."
     exit 1
   fi
 
