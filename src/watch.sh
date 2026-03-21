@@ -113,6 +113,16 @@ state_get_last_poll() {
   echo ""
 }
 
+# ── Job tracking ─────────────────────────────────────────────────────────────
+declare -A RUNNING_PIDS=()
+declare -A STREAM_PIDS=()
+
+is_issue_running() {
+  local issue_number="$1"
+  local pid="${RUNNING_PIDS[$issue_number]:-}"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
 # ── "Go" detection ───────────────────────────────────────────────────────────
 is_go_comment() {
   local body
@@ -145,12 +155,16 @@ log_action() {
 
 # ── Poll cycle functions ─────────────────────────────────────────────────────
 
+# NOTE: All loops use `< <(json_extract_array ...)` instead of
+# `json_extract_array ... | while` to avoid subshells. This ensures
+# modifications to RUNNING_PIDS/STREAM_PIDS propagate to the parent scope.
+
 check_new_comments() {
   local issues_json="$1"
   local since
   since=$(state_get_last_poll)
 
-  json_extract_array "$issues_json" | while IFS= read -r issue_json; do
+  while IFS= read -r issue_json; do
     local issue_number
     if [ "$PLATFORM" = "GitHub" ]; then
       issue_number=$(json_extract "$issue_json" "number")
@@ -163,7 +177,7 @@ check_new_comments() {
     comments_json=$(api_get_comments "$issue_number" "$since")
     [ -z "$comments_json" ] || [ "$comments_json" = "[]" ] && continue
 
-    json_extract_array "$comments_json" | while IFS= read -r comment_json; do
+    while IFS= read -r comment_json; do
       local comment_id body author
       comment_id=$(json_extract_raw "$comment_json" "id")
       body=$(json_extract "$comment_json" "body")
@@ -173,7 +187,7 @@ check_new_comments() {
         author=$(echo "$comment_json" | sed -n 's/.*"username" *: *"\([^"]*\)".*/\1/p' | head -1)
       fi
 
-      # Skip our own comments
+      # Skip empty comments
       [ -z "$body" ] && continue
 
       local last_seen
@@ -183,10 +197,10 @@ check_new_comments() {
       state_set "issue" "$issue_number" "last_comment_id" "$comment_id"
 
       if is_go_comment "$body"; then
-        log_event "$issue_number" "" "@${author}: \"${body}\""
+        log_event "$issue_number" "💬" "@${author}: \"${body}\""
         handle_go "$issue_number"
       else
-        log_event "$issue_number" "" "@${author} commented"
+        log_event "$issue_number" "💬" "@${author} commented"
         # Check if this looks like an answer to questions
         local had_questions
         had_questions=$(state_get "issue" "$issue_number" "has_questions")
@@ -195,8 +209,8 @@ check_new_comments() {
           state_set "issue" "$issue_number" "has_questions" "0"
         fi
       fi
-    done
-  done
+    done < <(json_extract_array "$comments_json")
+  done < <(json_extract_array "$issues_json")
 }
 
 check_pr_merges() {
@@ -204,7 +218,7 @@ check_pr_merges() {
   prs_json=$(api_get_prs)
   [ -z "$prs_json" ] || [ "$prs_json" = "[]" ] && return 0
 
-  json_extract_array "$prs_json" | while IFS= read -r pr_json; do
+  while IFS= read -r pr_json; do
     local pr_number state merged
     if [ "$PLATFORM" = "GitHub" ]; then
       pr_number=$(json_extract_raw "$pr_json" "number")
@@ -228,20 +242,20 @@ check_pr_merges() {
         linked_issue=$(echo "$title" | sed -n 's/.*#\([0-9]*\).*/\1/p' | head -1)
 
         if [ -n "$linked_issue" ]; then
-          log_event "$linked_issue" "" "PR #${pr_number} merged"
+          log_event "$linked_issue" "✅" "PR #${pr_number} merged"
           state_set "pr" "$pr_number" "state" "merged"
         fi
       fi
     else
       state_set "pr" "$pr_number" "state" "$state"
     fi
-  done
+  done < <(json_extract_array "$prs_json")
 }
 
 check_new_issues() {
   local issues_json="$1"
 
-  json_extract_array "$issues_json" | while IFS= read -r issue_json; do
+  while IFS= read -r issue_json; do
     local issue_number title
     if [ "$PLATFORM" = "GitHub" ]; then
       issue_number=$(json_extract "$issue_json" "number")
@@ -257,11 +271,11 @@ check_new_issues() {
       state_set "issue" "$issue_number" "known" "1"
       # Don't fire on first run — mark existing issues as known
       if [ -n "$(state_get_last_poll)" ]; then
-        log_event "$issue_number" "" "New issue: ${title}"
+        log_event "$issue_number" "🆕" "New issue: ${title}"
         handle_new_issue "$issue_number" "$title"
       fi
     fi
-  done
+  done < <(json_extract_array "$issues_json")
 }
 
 # ── Action handlers ──────────────────────────────────────────────────────────
@@ -309,19 +323,69 @@ handle_new_issue() {
 
 launch_issue() {
   local issue_number="$1"
+
+  # Don't launch if already running
+  if is_issue_running "$issue_number"; then
+    log_action "Issue #${issue_number} already running"
+    return
+  fi
+
   log_action "Launching cwf issue ${issue_number}..."
 
-  # Launch in background, capturing output to a log file
   local logfile="$STATE_DIR/issue-${issue_number}.log"
+  : > "$logfile"
+
+  # Run the command in background
   bash "$INSTALL_DIR/cwf-main.sh" issue "$issue_number" > "$logfile" 2>&1 &
-  local pid=$!
-  state_set "issue" "$issue_number" "pid" "$pid"
-  log_action "Running in background (PID $pid, log: $logfile)"
+  local cmd_pid=$!
+  RUNNING_PIDS[$issue_number]=$cmd_pid
+  state_set "issue" "$issue_number" "pid" "$cmd_pid"
+
+  # Stream logs in real-time, prefixed with issue number
+  # tail --pid exits when the command finishes; sed -u flushes per line
+  tail -n +1 -f --pid="$cmd_pid" "$logfile" 2>/dev/null \
+    | sed -u "s/^/  [#${issue_number}] /" &
+  STREAM_PIDS[$issue_number]=$!
+
+  log_action "Running (PID $cmd_pid)"
+}
+
+# ── Job completion detection ─────────────────────────────────────────────────
+
+check_running_jobs() {
+  for issue_number in "${!RUNNING_PIDS[@]}"; do
+    local pid="${RUNNING_PIDS[$issue_number]}"
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" 2>/dev/null
+      local exit_code=$?
+
+      # Let the log streamer flush remaining output
+      sleep 0.5
+      local stream_pid="${STREAM_PIDS[$issue_number]:-}"
+      if [ -n "$stream_pid" ] && kill -0 "$stream_pid" 2>/dev/null; then
+        kill "$stream_pid" 2>/dev/null
+        wait "$stream_pid" 2>/dev/null
+      fi
+
+      unset "RUNNING_PIDS[$issue_number]"
+      unset "STREAM_PIDS[$issue_number]"
+      state_set "issue" "$issue_number" "pid" ""
+
+      if [ "$exit_code" -eq 0 ]; then
+        log_event "$issue_number" "✅" "Implementation complete"
+      else
+        log_event "$issue_number" "❌" "Failed (exit code $exit_code)"
+      fi
+    fi
+  done
 }
 
 # ── Main poll cycle ──────────────────────────────────────────────────────────
 
 poll_cycle() {
+  # Check if any background jobs have finished
+  check_running_jobs
+
   local issues_json
   issues_json=$(api_get_issues 2>/dev/null || echo "")
 
@@ -340,6 +404,22 @@ poll_cycle() {
 
 watch_cleanup() {
   echo ""
+  # Kill all running issue commands
+  for issue_number in "${!RUNNING_PIDS[@]}"; do
+    local pid="${RUNNING_PIDS[$issue_number]}"
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+    fi
+  done
+  # Kill all log streamers
+  for issue_number in "${!STREAM_PIDS[@]}"; do
+    local pid="${STREAM_PIDS[$issue_number]}"
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+    fi
+  done
   print_info "Saving state and stopping..."
   state_set_last_poll "$(now_iso)"
   exit 0
@@ -410,7 +490,7 @@ main() {
     print_warn "No open issues found (or API unreachable)"
   else
     # Mark all existing issues as known
-    json_extract_array "$initial_issues" | while IFS= read -r issue_json; do
+    while IFS= read -r issue_json; do
       local issue_number
       if [ "$PLATFORM" = "GitHub" ]; then
         issue_number=$(json_extract "$issue_json" "number")
@@ -418,7 +498,7 @@ main() {
         issue_number=$(json_extract "$issue_json" "iid")
       fi
       [ -n "$issue_number" ] && state_set "issue" "$issue_number" "known" "1"
-    done
+    done < <(json_extract_array "$initial_issues")
     local count
     count=$(json_extract_array "$initial_issues" | wc -l)
     print_info "Tracking ${count} open issue(s)"
