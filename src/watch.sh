@@ -167,9 +167,9 @@ check_new_comments() {
   while IFS= read -r issue_json; do
     local issue_number
     if [ "$PLATFORM" = "GitHub" ]; then
-      issue_number=$(json_extract "$issue_json" "number")
+      issue_number=$(json_extract_raw "$issue_json" "number")
     else
-      issue_number=$(json_extract "$issue_json" "iid")
+      issue_number=$(json_extract_raw "$issue_json" "iid")
     fi
     [ -z "$issue_number" ] && continue
 
@@ -258,9 +258,9 @@ check_new_issues() {
   while IFS= read -r issue_json; do
     local issue_number title
     if [ "$PLATFORM" = "GitHub" ]; then
-      issue_number=$(json_extract "$issue_json" "number")
+      issue_number=$(json_extract_raw "$issue_json" "number")
     else
-      issue_number=$(json_extract "$issue_json" "iid")
+      issue_number=$(json_extract_raw "$issue_json" "iid")
     fi
     title=$(json_extract "$issue_json" "title")
     [ -z "$issue_number" ] && continue
@@ -493,9 +493,9 @@ main() {
     while IFS= read -r issue_json; do
       local issue_number
       if [ "$PLATFORM" = "GitHub" ]; then
-        issue_number=$(json_extract "$issue_json" "number")
+        issue_number=$(json_extract_raw "$issue_json" "number")
       else
-        issue_number=$(json_extract "$issue_json" "iid")
+        issue_number=$(json_extract_raw "$issue_json" "iid")
       fi
       [ -n "$issue_number" ] && state_set "issue" "$issue_number" "known" "1"
     done < <(json_extract_array "$initial_issues")

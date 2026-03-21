@@ -59,15 +59,29 @@ json_extract_raw() {
   echo "$json" | sed -n 's/.*"'"$key"'" *: *\([^,}]*\).*/\1/p' | head -1 | tr -d ' '
 }
 
-# Split a JSON array into individual objects (one per line)
+# Split a JSON array into individual top-level objects (one per line)
+# Tracks brace depth and string boundaries to handle nested objects correctly
 # Usage: json_extract_array "$json_array"
 json_extract_array() {
-  local json="$1"
-  # Split on },{ boundaries — output one object per line
-  echo "$json" | sed 's/\[//;s/\]//;s/},{/}\n{/g' | while IFS= read -r item; do
-    item=$(echo "$item" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    [ -n "$item" ] && echo "$item"
-  done
+  printf '%s\n' "$1" | awk '
+  BEGIN { depth=0; in_str=0; esc=0; obj="" }
+  {
+    for (i=1; i<=length($0); i++) {
+      c = substr($0, i, 1)
+      if (esc)    { esc=0; obj = obj c; continue }
+      if (c == "\\") { esc=1; obj = obj c; continue }
+      if (c == "\"") { in_str = !in_str; obj = obj c; continue }
+      if (in_str) { obj = obj c; continue }
+      if (c == "{") { depth++; obj = obj c; continue }
+      if (c == "}") {
+        depth--
+        obj = obj c
+        if (depth == 0) { print obj; obj = "" }
+        continue
+      }
+      if (depth > 0) { obj = obj c }
+    }
+  }'
 }
 
 # ── GitHub API helpers ────────────────────────────────────────────────────────
