@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  update.sh — Checks and applies claude-workflow updates
+#  NOTE: The { ... ; exit; } block forces bash to read the entire script into
+#  memory before executing. This prevents corruption when apply_update()
+#  replaces this file mid-execution.
 # =============================================================================
+{
 
 REPO="JeffreyGbeho/claude-workflow"
 INSTALL_DIR="$HOME/.claude-workflow"
@@ -66,12 +70,9 @@ apply_update() {
 
   print_step "Updating v${local_version} → v${remote_version}..."
 
-  # Download core scripts
+  # Download core scripts (update.sh LAST — it replaces this running file)
   curl -fsSL "${RAW_BASE}/src/install-claude-workflow.sh" -o "$INSTALL_DIR/install-claude-workflow.sh" && \
     chmod +x "$INSTALL_DIR/install-claude-workflow.sh"
-
-  curl -fsSL "${RAW_BASE}/src/update.sh" -o "$INSTALL_DIR/update.sh" && \
-    chmod +x "$INSTALL_DIR/update.sh"
 
   curl -fsSL "${RAW_BASE}/src/cwf-main.sh" -o "$INSTALL_DIR/cwf-main.sh" && \
     chmod +x "$INSTALL_DIR/cwf-main.sh"
@@ -91,6 +92,10 @@ apply_update() {
   # Download watch module
   curl -fsSL "${RAW_BASE}/src/watch.sh" -o "$INSTALL_DIR/watch.sh" && \
     chmod +x "$INSTALL_DIR/watch.sh"
+
+  # Self-update (last, after all other downloads)
+  curl -fsSL "${RAW_BASE}/src/update.sh" -o "$INSTALL_DIR/update.sh" && \
+    chmod +x "$INSTALL_DIR/update.sh"
 
   # Migrate old fat wrapper to thin launcher
   for dir in "$HOME/.local/bin" "$HOME/bin" "/usr/local/bin"; do
@@ -126,7 +131,7 @@ uninstall() {
   done
 
   echo ""
-  echo -e "\033[2m  Files created in your projects (CLAUDE.md, .claude/) were not removed.\033[0m"
+  echo -e "\033[2m  Files created in your projects were not removed.\033[0m"
   echo ""
   print_ok "Uninstall complete"
 }
@@ -139,3 +144,6 @@ case "$1" in
   --uninstall) uninstall ;;
   *)         apply_update ;;
 esac
+
+exit
+}
