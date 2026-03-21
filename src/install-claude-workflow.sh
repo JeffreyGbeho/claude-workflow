@@ -729,9 +729,39 @@ For each issue, determine:
 ## Step 3 — Explore the codebase
 Explore the project structure and understand existing code to be able to write a relevant implementation plan for each issue.
 
-## Step 4 — Post an individual comment on EACH issue
+## Step 4 — Post an individual comment on EACH issue (only if not already planned)
 
-For each issue (in priority order), post a comment **on that issue**.
+For each issue (in priority order):
+
+**First, check if this issue already has a planning comment.** Fetch existing comments:
+
+**If PLATFORM=GitHub:**
+```
+curl -s -H "Authorization: Bearer $TOKEN" "https://api.github.com/repos/$GITHUB_USERNAME/$GITHUB_REPO/issues/$ISSUE_NUMBER/comments"
+```
+
+**If PLATFORM=GitLab:**
+```
+curl -s --header "PRIVATE-TOKEN: $TOKEN" "$GITLAB_URL/api/v4/projects/$GITLAB_NAMESPACE%2F$GITLAB_PROJECT/issues/$ISSUE_NUMBER/notes"
+```
+
+Look for a comment that starts with `🔍 **Analyse de l'issue #` or `🔍 **Analysis of issue #`.
+
+**If a planning comment already exists:**
+- Do NOT post a new comment
+- But DO verify that the dependencies listed in the existing plan are still correct (check if blocking PRs have been merged since, or if new dependencies have appeared)
+- If dependencies have changed, post a SHORT update comment:
+  ```
+  📋 **Mise à jour des dépendances pour #<n>**
+
+  <what changed: e.g. "#12 is now merged, this issue is unblocked" or "New dependency on #20 detected">
+
+  Le plan reste valide. Répondez `go` pour lancer l'implémentation.
+  ```
+- If nothing changed, skip this issue entirely (no comment)
+- Mark this issue as "already planned" in the terminal summary
+
+**If no planning comment exists:** Post a new planning comment on that issue.
 
 **If PLATFORM=GitHub:**
 ```
@@ -798,10 +828,18 @@ After posting all comments, output a summary table to stdout (this will be displ
 
 ```
   #     Issue                          Status                Dépendances
-  #12   Tic tac toe initialisation     ✅ Prêt (go?)         —
-  #15   Scoreboard                     ⛔ Bloqué par #12     needs clarification
-  #18   Settings du game               ⛔ Bloqué par #12     ✅ Prêt (go?)
+  #12   Tic tac toe initialisation     ✅ Planifié (go?)      —
+  #15   Scoreboard                     📋 Déjà planifié       #12 (non mergé)
+  #18   Settings du game               🆕 Nouveau plan posté  #12 (non mergé)
+  #20   Bug fix login                  ⛔ Bloqué par #15     needs clarification
 ```
+
+Status legend:
+- 🆕 Nouveau plan posté — planning comment just posted
+- 📋 Déjà planifié — planning comment already existed, no changes needed
+- 📋 Deps mises à jour — planning existed, dependency update posted
+- ✅ Planifié (go?) — ready for `go`
+- ⛔ Bloqué par #X — waiting for dependency
 
 Then stop. Do not write code.
 
@@ -903,77 +941,89 @@ curl -s -X POST --header "PRIVATE-TOKEN: $TOKEN" --header "Content-Type: applica
   "$GITLAB_URL/api/v4/projects/$GITLAB_NAMESPACE%2F$GITLAB_PROJECT/issues/$ISSUE_NUMBER/notes"
 ```
 
-Comment format:
+**First, check if this issue already has a planning comment.** Look in the existing comments for one starting with `🔍 **Analyse de l'issue #` or `🔍 **Analysis of issue #`.
 
----
-**🔍 Analysis of issue #<n>**
+**If a planning comment already exists:** Do NOT post a new one. Just verify dependencies are still correct. If dependencies changed, post a short update. Then output a terminal summary and stop.
 
-**Base branch:** `main` (or `feature/<dep>-<title>` if dependency)
+**If no planning comment exists:** Post the plan in this format:
 
-**My understanding:** <summary>
+```
+🔍 **Analyse de l'issue #<n> — <title>**
 
-**My plan:**
+**Branche :** `feature/<n>-<short-title>` depuis `<base_branch>`
+<if no dependencies>
+**Dépendances :** Aucune
+<if has dependencies>
+**⛔ Bloqué par #<dep>** — cette issue doit être terminée et mergée avant de commencer celle-ci.
+
+**Mon plan :**
 1. <step 1>
 2. <step 2>
 3. <step 3>
 
-**Questions if any:** <or "No questions, ready to start">
+**Questions :** Aucune, prêt à commencer. (or list questions with ❓)
 
-Reply `go` for me to begin.
+Répondez `go` pour lancer l'implémentation.
+```
+
+Then output a terminal summary and stop. Do not write any code.
+Do NOT proceed to implementation. Wait for a `go` comment.
+
 ---
 
-## Step 5 — Wait for go
-Don't write anything in the terminal. Wait for a `go` comment in the issue.
+## If $ARGUMENTS contains "start"
 
-## Step 6 — Create branch and develop
+This mode skips planning — the plan has already been posted and validated with `go`.
 
-1. Make sure we're up to date:
-   ```
-   git fetch origin
-   ```
+1. Read `.claude/config` for PLATFORM, TOKEN, project details
+2. Extract the issue number from $ARGUMENTS
+3. Fetch the issue and ALL its comments via curl
+4. Find the planning comment (starts with `🔍`) — read it to understand the plan
+5. Read any subsequent comments (answers to questions, additional context from the user)
+6. Use all this context to understand what to implement
 
-2. Create the branch from the right base:
-   - If base is `main`: `git checkout -b feature/<n>-<short-title> origin/main`
-   - If base is a dependency branch: `git checkout -b feature/<n>-<short-title> <dependency-branch>`
+Then implement:
+1. `git fetch origin`
+2. Determine base branch from the plan (main or dependency branch)
+3. Create branch: `git checkout -b feature/<n>-<short-title> <base>`
+4. Develop the solution following the plan
+5. `git add -A && git commit -m "feat: <desc> (closes #<n>)"`
+6. `git rebase origin/<base>` if needed, then push
+7. Open PR/MR via curl (set base to dependency branch if not merged, otherwise main)
+8. Post completion comment on the issue: "✅ PR ouvert: <link to PR/MR>"
 
-3. Develop the solution
+Do NOT re-post a planning comment. Go straight to implementation.
 
-4. Commit with descriptive messages:
-   ```
-   git add -A && git commit -m "feat: <desc> (closes #<n>)"
-   ```
+---
 
-5. Before pushing, check for conflicts:
-   ```
-   git fetch origin
-   git rebase origin/main  (or rebase on dependency branch)
-   ```
-   If conflicts occur: resolve them, `git add .`, `git rebase --continue`
+## If $ARGUMENTS contains "respond"
 
-6. Push:
-   ```
-   git push origin feature/<n>-<short-title>
-   ```
+This mode handles a new comment on an already-planned issue. Someone replied (probably answering questions or asking for plan changes).
 
-## Step 7 — Open PR/MR via curl
+1. Read `.claude/config` for PLATFORM, TOKEN, project details
+2. Extract the issue number from $ARGUMENTS
+3. Fetch the issue and ALL its comments via curl
+4. Find the planning comment (starts with `🔍`) — understand the current plan
+5. Read the NEW comments after the plan — understand what the user said
 
-**If PLATFORM=GitHub:**
+Then analyze:
+- If the user answered questions from the plan → acknowledge their answers and update/confirm the plan
+- If the user requested changes to the plan → adjust and post an updated plan
+- If the user asked new questions → answer them based on your understanding of the codebase
+
+Post a response comment on the issue. Format:
+
 ```
-curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"title": "feat: <desc>", "head": "feature/<n>-<short-title>", "base": "main", "body": "Closes #<n>\n\n<description>"}' \
-  "https://api.github.com/repos/$GITHUB_USERNAME/$GITHUB_REPO/pulls"
-```
-Note: if the branch is based on a dependency branch (not yet merged), set `"base"` to that branch name instead of `"main"`.
+📝 **Mise à jour du plan pour #<n>**
 
-**If PLATFORM=GitLab:**
-```
-curl -s -X POST --header "PRIVATE-TOKEN: $TOKEN" --header "Content-Type: application/json" \
-  -d '{"source_branch": "feature/<n>-<short-title>", "target_branch": "main", "title": "feat: <desc>", "description": "Closes #<n>\n\n<description>"}' \
-  "$GITLAB_URL/api/v4/projects/$GITLAB_NAMESPACE%2F$GITLAB_PROJECT/merge_requests"
+<acknowledge what the user said>
+
+<updated plan if needed, or confirmation that the plan is unchanged>
+
+Répondez `go` pour lancer l'implémentation.
 ```
 
-## Step 8 — Post completion comment
-Post in the issue via curl: "✅ MR opened: <link to PR/MR>"
+Do NOT implement anything. Only respond to comments and update the plan if needed.
 
 ---
 

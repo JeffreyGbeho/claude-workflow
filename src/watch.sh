@@ -201,13 +201,7 @@ check_new_comments() {
         handle_go "$issue_number"
       else
         log_event "$issue_number" "💬" "@${author} commented"
-        # Check if this looks like an answer to questions
-        local had_questions
-        had_questions=$(state_get "issue" "$issue_number" "has_questions")
-        if [ "$had_questions" = "1" ]; then
-          log_action "Issue #${issue_number} may be ready for 'go'"
-          state_set "issue" "$issue_number" "has_questions" "0"
-        fi
+        handle_comment "$issue_number" "$author"
       fi
     done < <(json_extract_array "$comments_json")
   done < <(json_extract_array "$issues_json")
@@ -285,7 +279,7 @@ handle_go() {
 
   case "$WATCH_MODE" in
     notify)
-      log_action "Ready to implement (run: cwf issue $issue_number)"
+      log_action "Ready to implement (run: cwf issue $issue_number start)"
       ;;
     semi-auto)
       printf "            → Start implementation? [Y/n] "
@@ -293,13 +287,13 @@ handle_go() {
       read -r -t 30 answer </dev/tty 2>/dev/null || answer="n"
       answer="${answer:-y}"
       if [[ "$answer" =~ ^[Yy] ]]; then
-        launch_issue "$issue_number"
+        launch_issue "$issue_number" "start"
       else
         log_action "Skipped"
       fi
       ;;
     full-auto)
-      launch_issue "$issue_number"
+      launch_issue "$issue_number" "start"
       ;;
   esac
 }
@@ -309,20 +303,56 @@ handle_new_issue() {
 
   case "$WATCH_MODE" in
     notify)
-      log_action "Analyze with: cwf issue $issue_number"
+      log_action "New issue — plan with: cwf issue $issue_number"
       ;;
     semi-auto)
-      log_action "New issue detected. Run 'cwf issue $issue_number' to analyze."
+      printf "            → Auto-plan this issue? [Y/n] "
+      local answer
+      read -r -t 30 answer </dev/tty 2>/dev/null || answer="n"
+      answer="${answer:-y}"
+      if [[ "$answer" =~ ^[Yy] ]]; then
+        launch_issue "$issue_number" "plan"
+      else
+        log_action "Skipped"
+      fi
       ;;
     full-auto)
-      log_action "Auto-analyzing issue #${issue_number}..."
-      launch_issue "$issue_number"
+      log_action "Auto-planning issue #${issue_number}..."
+      launch_issue "$issue_number" "plan"
       ;;
   esac
 }
 
+handle_comment() {
+  local issue_number="$1" author="$2"
+
+  case "$WATCH_MODE" in
+    notify)
+      log_action "Respond with: cwf issue $issue_number respond"
+      ;;
+    semi-auto)
+      printf "            → Analyze and respond? [Y/n] "
+      local answer
+      read -r -t 30 answer </dev/tty 2>/dev/null || answer="n"
+      answer="${answer:-y}"
+      if [[ "$answer" =~ ^[Yy] ]]; then
+        launch_issue "$issue_number" "respond"
+      else
+        log_action "Skipped"
+      fi
+      ;;
+    full-auto)
+      log_action "Auto-responding to comment on #${issue_number}..."
+      launch_issue "$issue_number" "respond"
+      ;;
+  esac
+}
+
+# launch_issue <issue_number> [mode]
+# mode: "plan" (default) | "start" | "respond"
 launch_issue() {
   local issue_number="$1"
+  local mode="${2:-plan}"
 
   # Don't launch if already running
   if is_issue_running "$issue_number"; then
@@ -330,16 +360,31 @@ launch_issue() {
     return
   fi
 
-  log_action "Launching cwf issue ${issue_number}..."
+  local label
+  case "$mode" in
+    plan)    label="Planning" ;;
+    start)   label="Implementing" ;;
+    respond) label="Responding" ;;
+  esac
+
+  log_action "${label} issue #${issue_number}..."
 
   local logfile="$STATE_DIR/issue-${issue_number}.log"
   : > "$logfile"
 
+  # Build the command based on mode
+  local cmd_args=("issue" "$issue_number")
+  case "$mode" in
+    start)   cmd_args+=("start") ;;
+    respond) cmd_args+=("respond") ;;
+  esac
+
   # Run the command in background
-  bash "$INSTALL_DIR/cwf-main.sh" issue "$issue_number" > "$logfile" 2>&1 &
+  bash "$INSTALL_DIR/cwf-main.sh" "${cmd_args[@]}" > "$logfile" 2>&1 &
   local cmd_pid=$!
   RUNNING_PIDS[$issue_number]=$cmd_pid
   state_set "issue" "$issue_number" "pid" "$cmd_pid"
+  state_set "issue" "$issue_number" "mode" "$mode"
 
   # Stream logs in real-time, prefixed with issue number
   # tail --pid exits when the command finishes; sed -u flushes per line
@@ -371,10 +416,20 @@ check_running_jobs() {
       unset "STREAM_PIDS[$issue_number]"
       state_set "issue" "$issue_number" "pid" ""
 
+      local mode
+      mode=$(state_get "issue" "$issue_number" "mode")
       if [ "$exit_code" -eq 0 ]; then
-        log_event "$issue_number" "✅" "Implementation complete"
+        case "$mode" in
+          start)   log_event "$issue_number" "✅" "Implementation complete" ;;
+          respond) log_event "$issue_number" "✅" "Response posted" ;;
+          *)       log_event "$issue_number" "✅" "Planning complete" ;;
+        esac
       else
-        log_event "$issue_number" "❌" "Failed (exit code $exit_code)"
+        case "$mode" in
+          start)   log_event "$issue_number" "❌" "Implementation failed (exit $exit_code)" ;;
+          respond) log_event "$issue_number" "❌" "Response failed (exit $exit_code)" ;;
+          *)       log_event "$issue_number" "❌" "Planning failed (exit $exit_code)" ;;
+        esac
       fi
     fi
   done
@@ -483,25 +538,72 @@ main() {
   echo -e "${BOLD}${CYAN}cwf watch${RESET} · polling every ${POLL_INTERVAL}s · mode: ${BOLD}${WATCH_MODE}${RESET}"
   echo ""
 
-  # Initial discovery (mark existing issues as known without firing events)
+  # Initial discovery — mark existing issues as known and detect unplanned ones
   local initial_issues
   initial_issues=$(api_get_issues 2>/dev/null || echo "")
   if [ -z "$initial_issues" ] || [ "$initial_issues" = "[]" ]; then
     print_warn "No open issues found (or API unreachable)"
   else
-    # Mark all existing issues as known
+    local count=0
+    local unplanned=()
+
     while IFS= read -r issue_json; do
-      local issue_number
+      local issue_number title
       if [ "$PLATFORM" = "GitHub" ]; then
         issue_number=$(json_extract_raw "$issue_json" "number")
       else
         issue_number=$(json_extract_raw "$issue_json" "iid")
       fi
-      [ -n "$issue_number" ] && state_set "issue" "$issue_number" "known" "1"
+      title=$(json_extract "$issue_json" "title")
+      [ -z "$issue_number" ] && continue
+
+      state_set "issue" "$issue_number" "known" "1"
+      count=$((count + 1))
+
+      # Check if this issue has a planning comment
+      local comments_json
+      comments_json=$(api_get_comments "$issue_number" 2>/dev/null || echo "")
+      local has_plan=0
+      if [ -n "$comments_json" ] && [ "$comments_json" != "[]" ]; then
+        # Check if any comment contains the planning marker
+        if echo "$comments_json" | grep -q 'Analyse de l.*issue #\|Analysis of issue #'; then
+          has_plan=1
+        fi
+      fi
+
+      if [ "$has_plan" -eq 0 ]; then
+        unplanned+=("$issue_number")
+        print_info "  #${issue_number} ${title} — no plan yet"
+      fi
     done < <(json_extract_array "$initial_issues")
-    local count
-    count=$(json_extract_array "$initial_issues" | wc -l)
+
     print_info "Tracking ${count} open issue(s)"
+
+    # Auto-plan unplanned issues
+    if [ ${#unplanned[@]} -gt 0 ]; then
+      echo ""
+      print_step "${#unplanned[@]} issue(s) without plan detected"
+
+      for issue_number in "${unplanned[@]}"; do
+        case "$WATCH_MODE" in
+          notify)
+            log_action "Plan with: cwf issue $issue_number"
+            ;;
+          semi-auto)
+            printf "  Plan issue #${issue_number}? [Y/n] "
+            local answer
+            read -r -t 30 answer </dev/tty 2>/dev/null || answer="n"
+            answer="${answer:-y}"
+            if [[ "$answer" =~ ^[Yy] ]]; then
+              launch_issue "$issue_number" "plan"
+            fi
+            ;;
+          full-auto)
+            launch_issue "$issue_number" "plan"
+            ;;
+        esac
+      done
+    fi
   fi
 
   state_set_last_poll "$(now_iso)"

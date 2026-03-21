@@ -117,8 +117,10 @@ show_help() {
   echo "  status                  Show issues, branches, and MR status"
   echo "  issues                  Analyze all issues and propose a plan"
   echo "  issues start            Start working after plan validation"
-  echo "  issue <n>               Work on a specific issue"
-  echo "  issue <n> --interactive Work on issue with terminal questions"
+  echo "  issue <n>               Analyze and plan a specific issue"
+  echo "  issue <n> start         Implement issue (after plan validation)"
+  echo "  issue <n> respond       Respond to comments on a planned issue"
+  echo "  issue <n> --interactive Plan issue with terminal questions"
   echo "  watch                   Watch for events and auto-act on issues"
   echo "  update                  Update cwf to latest version"
   echo "  uninstall               Uninstall cwf"
@@ -158,7 +160,19 @@ case "$1" in
       print_error "Missing issue number. Usage: cwf issue <number>"
       exit 1
     fi
-    run_claude "cwf-issue" "$*" "issue $*" "Working on issue..."
+    local issue_num="$1"
+    shift
+    if [ "${1:-}" = "start" ]; then
+      shift
+      run_claude "cwf-issue" "$issue_num start $*" "issue $issue_num start" "Implementing issue #${issue_num}..." \
+        "IMPORTANT: Skip Steps 1-4 entirely. Go directly to the section that handles the 'start' argument. The plan has already been posted and validated. Read the existing comments to understand the plan, then implement."
+    elif [ "${1:-}" = "respond" ]; then
+      shift
+      run_claude "cwf-issue" "$issue_num respond $*" "issue $issue_num respond" "Responding to comments on #${issue_num}..." \
+        "IMPORTANT: Skip Steps 1-4 entirely. Go directly to the section that handles the 'respond' argument. Read the issue comments and respond to the latest ones."
+    else
+      run_claude "cwf-issue" "$issue_num $*" "issue $issue_num" "Analyzing issue #${issue_num}..."
+    fi
     ;;
   watch)
     shift
